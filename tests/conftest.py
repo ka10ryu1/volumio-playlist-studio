@@ -68,6 +68,9 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("TYPESAFE_BASE_URL", "")
     monkeypatch.setenv("VOLUMIO_HOST", "")
     monkeypatch.setenv("VPS_DATA_DIR", str(tmp_path / "app-data"))
+    monkeypatch.setenv("VPS_PORT", "")
+    monkeypatch.setenv("VPS_LAN", "")
+    monkeypatch.setenv("VPS_LAN_ADDRESS", "")
 
 
 def sine(seconds: float, freq: float = 440.0, amplitude: float = 0.3, sr: int = SAMPLE_RATE) -> np.ndarray:

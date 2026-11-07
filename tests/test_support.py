@@ -1,15 +1,22 @@
 """設定、パス変換、バックグラウンド処理、集計、サンプルデータのテスト。"""
 
 import logging
+import os
 import sqlite3
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
 from volumio_playlist_studio.catalog import UNKNOWN_GENRE_LABEL, dashboard_stats, load_candidates
-from volumio_playlist_studio.config import AnalysisParams, is_typesafe_api_key_set, load_app_config
+from volumio_playlist_studio.config import AnalysisParams, is_typesafe_api_key_set, load_app_config, load_env_file
 from volumio_playlist_studio.jobs import BackgroundJob, JobControl, JobState
-from volumio_playlist_studio.library_paths import LibraryPathError, redact_paths, resolve_library_input
+from volumio_playlist_studio.library_paths import (
+    HostPlatform,
+    LibraryPathError,
+    detect_platform,
+    redact_paths,
+    resolve_library_input,
+)
 from volumio_playlist_studio.models import ClassificationSource, Genre
 from volumio_playlist_studio.sample_data import DEMO_LIBRARY_ROOT, generate_sample_audio, load_demo_library, main
 from volumio_playlist_studio.scanner import scan_library
@@ -33,11 +40,50 @@ def test_load_app_config_from_environment() -> None:
     assert config.volumio_host == "volumio.local"
 
 
-def test_load_app_config_defaults() -> None:
-    config = load_app_config({})
+def test_load_app_config_defaults_are_relative_to_project_root() -> None:
+    # ダブルクリックで起動してもカレントフォルダに依存しないよう、プロジェクト直下を基準にする
+    root = Path(__file__).resolve().parents[1]
 
-    assert config.data_dir == Path("data")
+    config = load_app_config({})
+    relative = load_app_config({"VPS_DATA_DIR": "mydata"})
+
+    assert config.data_dir == root / "data"
+    assert relative.data_dir == root / "mydata"
     assert config.volumio_host is None
+    assert (config.port, config.lan, config.lan_address) == (8501, False, None)
+
+
+@pytest.mark.parametrize(
+    ("env", "port", "lan"),
+    [
+        ({"VPS_PORT": "8600", "VPS_LAN": "1"}, 8600, True),
+        ({"VPS_PORT": " ", "VPS_LAN": "true"}, 8501, True),
+        ({"VPS_PORT": "abc", "VPS_LAN": "0"}, 8501, False),
+        ({"VPS_PORT": "80", "VPS_LAN": ""}, 8501, False),
+        ({"VPS_PORT": "70000"}, 8501, False),
+    ],
+)
+def test_port_and_lan_settings(env: dict[str, str], port: int, lan: bool) -> None:
+    config = load_app_config(env)
+
+    assert (config.port, config.lan) == (port, lan)
+
+
+def test_lan_address_setting() -> None:
+    assert load_app_config({"VPS_LAN_ADDRESS": " 192.168.1.10 "}).lan_address == "192.168.1.10"
+
+
+def test_load_env_file_does_not_override_existing_variables(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    env_file = tmp_path / ".env"
+    env_file.write_text("VOLUMIO_HOST=from-file\nVPS_TEST_ONLY=loaded\n", encoding="utf-8")
+    monkeypatch.setenv("VOLUMIO_HOST", "from-env")
+    monkeypatch.delenv("VPS_TEST_ONLY", raising=False)
+
+    load_env_file(env_file)
+
+    assert os.environ["VOLUMIO_HOST"] == "from-env"
+    assert os.environ["VPS_TEST_ONLY"] == "loaded"
+    monkeypatch.delenv("VPS_TEST_ONLY")
 
 
 @pytest.mark.parametrize(("value", "expected"), [("key", True), ("  ", False), ("", False)])
@@ -61,33 +107,49 @@ def test_invalid_analysis_params(params: AnalysisParams) -> None:
 
 
 @pytest.mark.parametrize(
-    ("text", "wsl", "expected"),
+    ("text", "host", "expected"),
     [
-        ("/mnt/volumio", False, Path("/mnt/volumio")),
-        ('  "/home/user/音楽"  ', False, Path("/home/user/音楽")),
-        ("C:\\Users\\me\\Music", True, Path("/mnt/c/Users/me/Music")),
-        ("d:/音楽/", True, Path("/mnt/d/音楽")),
+        ("/mnt/volumio", HostPlatform.POSIX, "/mnt/volumio"),
+        ('  "/home/user/音楽"  ', HostPlatform.WSL, "/home/user/音楽"),
+        ("C:\\Users\\me\\Music", HostPlatform.WSL, "/mnt/c/Users/me/Music"),
+        ("d:/音楽/", HostPlatform.WSL, "/mnt/d/音楽"),
+        # Windows ではドライブのパスも UNC パス（SMB 共有）もそのまま開ける
+        ("C:\\Users\\me\\Music", HostPlatform.WINDOWS, "C:\\Users\\me\\Music"),
+        ("\\\\volumio.local\\Internal Storage", HostPlatform.WINDOWS, "\\\\volumio.local\\Internal Storage"),
     ],
 )
-def test_resolve_library_input(text: str, wsl: bool, expected: Path) -> None:
-    assert resolve_library_input(text, wsl=wsl) == expected
+def test_resolve_library_input(text: str, host: HostPlatform, expected: str) -> None:
+    assert str(resolve_library_input(text, host=host)) == expected
 
 
 @pytest.mark.parametrize(
-    ("text", "wsl", "message"),
+    ("text", "host", "message"),
     [
-        ("", False, "入力"),
-        ("\\\\volumio\\Internal Storage", True, "マウント"),
-        ("//volumio/share", True, "マウント"),
-        ("C:\\Music", False, "WSL"),
-        ("relative/path", False, "絶対パス"),
+        ("", HostPlatform.WINDOWS, "入力"),
+        ("\\\\volumio\\Internal Storage", HostPlatform.WSL, "マウント"),
+        ("//volumio/share", HostPlatform.WSL, "マウント"),
+        ("C:\\Music", HostPlatform.POSIX, "Windows"),
+        ("relative/path", HostPlatform.POSIX, "絶対パス"),
+        ("Music", HostPlatform.WINDOWS, "絶対パス"),
+        # ドライブ名だけで区切りのないパスは、そのドライブのカレントフォルダからの相対パス
+        ("C:Music", HostPlatform.WINDOWS, "絶対パス"),
     ],
 )
-def test_resolve_library_input_rejects_unusable_paths(text: str, wsl: bool, message: str) -> None:
+def test_resolve_library_input_rejects_unusable_paths(text: str, host: HostPlatform, message: str) -> None:
     with pytest.raises(LibraryPathError) as exc_info:
-        resolve_library_input(text, wsl=wsl)
+        resolve_library_input(text, host=host)
 
     assert message in exc_info.value.user_message
+
+
+def test_detect_platform_returns_known_value() -> None:
+    assert detect_platform() in set(HostPlatform)
+
+
+def test_redact_paths_handles_both_separators() -> None:
+    redacted = redact_paths("Error opening 'C:/Music/a.flac'", [PureWindowsPath("C:\\Music")])
+
+    assert redacted == "Error opening '<library>/a.flac'"
 
 
 def test_redact_paths_removes_library_root_and_home() -> None:

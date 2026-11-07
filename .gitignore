@@ -224,3 +224,6 @@ __marimo__/
 *.sqlite3
 *.sqlite3-*
 *.sqlite3.bak-*
+
+# Windows でネットワーク上のフォルダ（\\wsl.localhost など）から setup.cmd を実行したときの仮想環境
+.venv-windows/

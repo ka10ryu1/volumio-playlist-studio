@@ -4,9 +4,18 @@
 このモジュールに集約し、各モジュールに散在させない。
 """
 
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+
+from dotenv import load_dotenv
+
+logger = logging.getLogger(__name__)
+
+# リポジトリのルート（src/volumio_playlist_studio/config.py から 2 階層上）。
+# ダブルクリックでの起動でもカレントフォルダに依存しないよう、.env とデータの保存先の基準にする
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 # 解析・分類ロジックのバージョン。出力が変わる変更では必ず更新する。
 # 評価データがどのバージョンの結果に対するものかを追跡するために、DB の各結果に記録する。
@@ -23,12 +32,17 @@ ANALYZABLE_EXTENSIONS = frozenset({".mp3", ".flac", ".ogg", ".opus", ".wav", ".a
 DATA_DIR_ENV = "VPS_DATA_DIR"
 TYPESAFE_API_KEY_ENV = "TYPESAFE_API_KEY"  # TypeSafe SDK が読む環境変数名と同じ
 VOLUMIO_HOST_ENV = "VOLUMIO_HOST"
+PORT_ENV = "VPS_PORT"
+LAN_ENV = "VPS_LAN"
+LAN_ADDRESS_ENV = "VPS_LAN_ADDRESS"
 
 # 人手評価（属性の評価、プレイリストの満足度）に使う 5 段階の尺度
 RATING_MIN = 1
 RATING_MAX = 5
 
-DEFAULT_DATA_DIR = Path("data")
+DEFAULT_DATA_DIR = PROJECT_ROOT / "data"
+DEFAULT_PORT = 8501
+ENV_FILENAME = ".env"
 DATABASE_FILENAME = "studio.sqlite3"
 LOG_DIRNAME = "logs"
 LOG_FILENAME = "app.log"
@@ -160,10 +174,16 @@ class AppConfig:
     Attributes:
         data_dir: SQLite やログを保存するディレクトリ。
         volumio_host: Volumio の接続先（未設定なら None）。
+        port: GUI のポート番号。
+        lan: True なら LAN 内の他の端末（スマホ）からの接続を受け付け、PIN を求める。
+        lan_address: スマホから接続する PC の IP アドレス。None なら起動時に自動で取得する。
     """
 
     data_dir: Path
     volumio_host: str | None = None
+    port: int = DEFAULT_PORT
+    lan: bool = False
+    lan_address: str | None = None
     analysis: AnalysisParams = field(default_factory=AnalysisParams)
     jev: JevSettings = field(default_factory=JevSettings)
 
@@ -178,6 +198,15 @@ class AppConfig:
         return self.data_dir / LOG_DIRNAME / LOG_FILENAME
 
 
+def load_env_file(path: Path | None = None) -> None:
+    """プロジェクト直下の .env を環境変数に読み込む。既に設定されている環境変数は上書きしない。
+
+    Args:
+        path: 読み込む .env のパス。省略時はプロジェクト直下の .env。
+    """
+    load_dotenv(path or PROJECT_ROOT / ENV_FILENAME, override=False)
+
+
 def load_app_config(environ: dict[str, str] | None = None) -> AppConfig:
     """環境変数から設定を読み込む。
 
@@ -189,8 +218,33 @@ def load_app_config(environ: dict[str, str] | None = None) -> AppConfig:
     """
     env = dict(os.environ) if environ is None else environ
     data_dir = Path(env.get(DATA_DIR_ENV, "").strip() or DEFAULT_DATA_DIR)
-    volumio_host = env.get(VOLUMIO_HOST_ENV, "").strip() or None
-    return AppConfig(data_dir=data_dir, volumio_host=volumio_host)
+    if not data_dir.is_absolute():
+        data_dir = PROJECT_ROOT / data_dir
+
+    return AppConfig(
+        data_dir=data_dir,
+        volumio_host=env.get(VOLUMIO_HOST_ENV, "").strip() or None,
+        port=_env_port(env.get(PORT_ENV, "")),
+        lan=env.get(LAN_ENV, "").strip().lower() in {"1", "true", "yes"},
+        lan_address=env.get(LAN_ADDRESS_ENV, "").strip() or None,
+    )
+
+
+def _env_port(raw: str, minimum: int = 1024, maximum: int = 65535) -> int:
+    """ポート番号を読む。未設定なら既定値、範囲外や数値でなければ警告を出して既定値を使う。"""
+    if not raw.strip():
+        return DEFAULT_PORT
+
+    try:
+        port = int(raw)
+    except ValueError:
+        port = 0
+
+    if not minimum <= port <= maximum:
+        logger.warning("invalid port setting: name=%s fallback=%d", PORT_ENV, DEFAULT_PORT)
+        return DEFAULT_PORT
+
+    return port
 
 
 def is_typesafe_api_key_set(environ: dict[str, str] | None = None) -> bool:

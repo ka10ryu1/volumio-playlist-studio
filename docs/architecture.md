@@ -32,10 +32,22 @@ src/volumio_playlist_studio/
 ├── catalog.py         画面・選曲エンジン向けのデータ集約（候補、ダッシュボードの集計）
 ├── workflows.py       画面から呼ぶ一連の処理（スキャン、解析、Jev 判定、見積もり）
 ├── jobs.py            バックグラウンドスレッドでの実行と進捗
+├── launcher.py        起動処理（.env の読み込み、二重起動の検知、Streamlit の起動、ブラウザを開く）
+├── lan_access.py      LAN モードの PIN 認証、PC の LAN の IP アドレス取得、QR コード生成
 ├── sample_data.py     架空のサンプルデータと合成音声の生成
 ├── storage/           SQLite の接続・マイグレーションと各テーブルの読み書き
-└── gui/               Streamlit の画面（app.py がエントリポイント、views/ が各画面）
+└── gui/               Streamlit の画面（app.py がエントリポイント、views/ が各画面、lan.py が PIN 入力画面）
+
+setup.cmd / start.cmd  Windows でダブルクリックする入口（中身は scripts/windows/*.ps1）
+tools/                 開発用のツール（インデントが戻る箇所への空行の挿入）
 ```
+
+## 起動と LAN 接続
+
+- Windows では `start.cmd` → `scripts/windows/start.ps1` → `python -m volumio_playlist_studio.launcher` の順に呼び出す。WSL・Linux では launcher を直接実行する
+- launcher はプロジェクト直下の `.env` を読み、同じポートで既に Streamlit が応答していれば 2 つ目を起動せずブラウザで開くだけにする。起動する場合は Streamlit を子プロセスとして実行し、応答を確認してからブラウザを開く
+- 既定では `127.0.0.1` だけで待ち受ける。`.env` の `VPS_LAN=1` のときだけ全てのネットワークで待ち受け、localhost と判定できない接続（`st.context.ip_address` が `None` でない）には、ページを表示する前に PIN の入力を求める
+- PIN と認証済みの印は `st.cache_resource` で全セッションに共有する `LanAccess` が持ち、プロセスのメモリにだけ置く。認証済みの印は Streamlit のセッション（ブラウザのタブ）に保存する
 
 ## データフロー
 

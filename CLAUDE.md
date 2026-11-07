@@ -33,10 +33,16 @@
 - Jev は公式 SDK（`typesafe-sdk`）を使う。テストでは `httpx2.MockTransport` で HTTP 層だけを差し替え、実 API とは通信しない
 - 実 API を使った検証は料金が発生するため、ユーザーの指示なしに実行しない
 
-### 起動と確認
+### 動作環境と起動
+
+- 開発は WSL、実際の利用は Windows に直接クローンして `setup.cmd` → `start.cmd`（ダブルクリック）で起動する想定。Windows 固有の処理（パス、ランチャー）を変えるときは両方の環境を意識する
+- `.env` とデータの保存先はプロジェクト直下を基準にする（`config.PROJECT_ROOT`）。ダブルクリック起動ではカレントフォルダに依存できないため
+- 起動処理は `launcher.py` にまとめ、`scripts/windows/*.ps1` からはそれを呼ぶだけにする。`.ps1` は Windows PowerShell 5.1 で日本語を読めるよう BOM 付き UTF-8・CRLF で保存する
 
 ```bash
-uv run streamlit run src/volumio_playlist_studio/gui/app.py
+uv run python -m volumio_playlist_studio.launcher   # WSL・Linux
 ```
+
+- LAN モード（`VPS_LAN=1`）では、localhost と判定できない接続に PIN を求める（`gui/lan.py`）。PIN 画面より前に、ライブラリの内容を表示する処理を置かない
 
 GUI のテストは `streamlit.testing.v1.AppTest` で行う（`tests/test_gui.py`）。画面単位のテストは、`view_script` で 1 画面だけを表示して操作する。

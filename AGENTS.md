@@ -22,6 +22,7 @@
   - 音響解析: librosa、soundfile
   - AI 判定: TypeSafe Jev（公式 SDK `typesafe-sdk`）
   - 設定の読み込み: python-dotenv（`.env`）
+  - LAN 接続用の QR コード: qrcode（型スタブは開発用の types-qrcode）
   - データベース: SQLite（標準ライブラリの `sqlite3`）
 
 | 用途 | コマンド |

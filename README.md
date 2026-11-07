@@ -17,51 +17,80 @@ Raspberry Pi 上の Volumio に保存した音楽を PC から SMB 共有経由�
 | 精度評価（人手評価、調整用／検証用の分割、指標、CSV 出力、プレイリストの満足度） | 実装済み |
 | Volumio へのプレイリスト登録 | **モッククライアントのみ**。実機との通信は未実装（[docs/volumio.md](docs/volumio.md)） |
 | Essentia | 未導入（比較できる設計のみ。[docs/architecture.md](docs/architecture.md)） |
+| Windows でのダブルクリック起動（`setup.cmd` / `start.cmd`） | 実装済み（Windows 上でセットアップ・起動・スキャン・解析まで確認） |
+| スマホからの LAN 接続（PIN 認証） | 実装済み。**実機のスマホからの接続は未確認**（ロジックと画面はテストで確認） |
 
 ## 必要な環境
 
-- Windows 11 + WSL2（Ubuntu など）。Linux でも動作します
-- [uv](https://docs.astral.sh/uv/)
-- Python 3.14（uv が `.python-version` に従って用意します）
+- Windows 10 / 11（PowerShell は Windows 標準のもので可）
+- [uv](https://docs.astral.sh/uv/)（未導入なら `setup.cmd` の実行中に winget でインストールできます）
+- Python 3.14（uv が `.python-version` に従って自動で用意します。手動でのインストールは不要です）
 
-## セットアップ
+開発用には WSL2 / Linux でも動作します（[開発](#開発)）。
 
-```bash
-git clone <このリポジトリ>
-cd volumio-playlist-studio
-uv sync
-cp .env.example .env   # Jev を使う場合は TYPESAFE_API_KEY を設定する
-```
+## セットアップ（Windows）
 
-API キーは `.env` または環境変数で設定します。キーは画面にもログにも表示されません。未設定でも、ルールベースの分類で全機能（Jev 判定を除く）を使えます。
+1. リポジトリを Windows のローカルディスクに取得します（例: `C:\Users\<名前>\volumio-playlist-studio`）
+
+   ```powershell
+   git clone <このリポジトリの URL> volumio-playlist-studio
+   ```
+
+2. エクスプローラーで **`setup.cmd` をダブルクリック** します。次を自動で行います
+   1. uv の確認（ない場合は winget でのインストールを確認します。`Y` または Enter で続行）
+   2. Python と依存パッケージを `uv.lock` どおりに用意（初回は数分かかります）
+   3. `.env` がなければ `.env.example` からコピー
+
+   実行内容は `data\logs\setup_YYYYMMDD_HHMMSS.log` に記録されます。
+
+3. （Jev を使う場合）`.env` をメモ帳などで開き、API キーを設定します
+
+   ```ini
+   TYPESAFE_API_KEY=ts-xxxxxxxxxxxxxxxx
+   ```
+
+   API キーは <https://console.typesafe.ai/keys> で発行します。キーは `.env` にだけ保存し、画面にもログにも表示しません。未設定でも、ルールベースの分類で Jev 判定以外の機能をすべて使えます。設定を変えたらアプリを再起動してください。
 
 ## 起動
 
-```bash
-uv run streamlit run src/volumio_playlist_studio/gui/app.py
-```
+**`start.cmd` をダブルクリック** すると、アプリが起動して既定のブラウザで <http://localhost:8501> が開きます。終了するときは、起動した黒いウィンドウで `Ctrl+C` を押すか、ウィンドウを閉じます。
 
-Windows のブラウザで <http://localhost:8501> を開きます。初期設定ではこの PC からのみ接続できます（`.streamlit/config.toml`）。
+- 初期設定ではこの PC からのみ接続できます
+- 起動中にもう一度 `start.cmd` を実行すると、2 つ目は起動せず、起動中の画面をブラウザで開きます
+- ポートを変えたい場合は `.env` の `VPS_PORT` を変更します
 
 音楽ファイルがなくても、画面の「サンプルデータで試す」で架空の楽曲 60 曲を読み込み、選曲から保存までの流れを試せます。
 
+### うまく動かないとき
+
+- **ウィンドウがすぐ閉じる**: PowerShell で `.\setup.cmd` や `.\start.cmd` を実行すると、メッセージを確認できます
+- **「仮想環境が見つかりません」**: 先に `setup.cmd` を実行してください
+- **「ポート 8501 は別のプログラムが使用中」**: `.env` の `VPS_PORT` を別の番号（例: 8502）にしてください
+- **起動に何分もかかる**: `\\wsl.localhost\...` などネットワーク上のフォルダから起動すると、ライブラリの読み込みが遅くなります。Windows のローカルディスクに置いてください
+- **「スクリプトの実行が無効」**: ZIP でダウンロードした場合は、フォルダで `Get-ChildItem -Recurse | Unblock-File` を実行してから再実行してください
+
 ## 音楽フォルダの指定
 
-画面の「音楽フォルダ」に、WSL から見えるフォルダの絶対パスを入力します。
+画面の「音楽フォルダ」に、フォルダの絶対パスを入力します。
 
-- WSL 上のフォルダ: `/home/<ユーザー>/Music`
-- Windows のフォルダ: `C:\Users\<ユーザー>\Music` と入力すると `/mnt/c/Users/<ユーザー>/Music` に変換されます
-- Volumio の SMB 共有: UNC パス（`\\volumio.local\...`）は WSL から直接開けないため、先に読み取り専用でマウントします
+- **Volumio の SMB 共有**: Windows では UNC パスをそのまま指定できます（例: `\\volumio.local\Internal Storage`）。共有名はエクスプローラーのアドレス欄に `\\volumio.local` と入力して確認してください。共有の資格情報を求められる場合は、先にエクスプローラーで一度開いておきます
+- **ローカルのフォルダ**: `C:\Users\<名前>\Music` など
+
+アプリは音楽ファイルを読み取るだけで、タグの書き換えやファイルの移動・削除は行いません。SMB 共有越しの解析は、ローカルディスクより時間がかかります（初回の解析は 1 曲あたり数秒が目安）。
+
+<details>
+<summary>WSL で動かす場合</summary>
+
+WSL から UNC パスは直接開けないため、読み取り専用でマウントしてから、マウント先を指定します（この手順は Volumio 実機では未確認です）。
 
 ```bash
-# 共有名はエクスプローラーで \\volumio.local を開いて確認する（例: "Internal Storage"）
 sudo mkdir -p /mnt/volumio
 sudo mount -t drvfs '\\volumio.local\Internal Storage' /mnt/volumio -o ro
 ```
 
-この手順は Volumio 実機では未確認です。マウントできない場合は、Windows でネットワークドライブ（例: `Z:`）に割り当ててから `sudo mount -t drvfs Z: /mnt/volumio -o ro` を試してください。
+`C:\Users\<名前>\Music` のような Windows のパスは、自動で `/mnt/c/Users/<名前>/Music` に変換します。
 
-マウント後、`/mnt/volumio` を音楽フォルダとして指定します。アプリは音楽ファイルを読み取るだけで、タグの書き換えやファイルの移動・削除は行いません。
+</details>
 
 ## 操作手順
 
@@ -92,27 +121,41 @@ uv run python -m volumio_playlist_studio.sample_data demo data/studio.sqlite3
 uv run python -m volumio_playlist_studio.sample_data audio /tmp/sample-music
 ```
 
-## LAN からのアクセス（iPhone など）
+## スマホから開く（自宅 LAN、任意）
 
-初期設定では外部から接続できません。アプリには認証機能がないため、LAN に公開すると同じネットワークの誰でもライブラリの閲覧や設定の変更ができます。信頼できる自宅 LAN でのみ、一時的に次のように起動してください。
+iPhone の Safari などから、自宅 Wi-Fi 経由で画面を開けます。Windows で直接起動したときだけ使えます（WSL 内で起動するとスマホから届きません）。
 
-```bash
-uv run streamlit run src/volumio_playlist_studio/gui/app.py --server.address 0.0.0.0
-```
+1. Windows の「設定」→「ネットワークとインターネット」→「Wi-Fi」→ 自宅の Wi-Fi のプロパティで、ネットワーク プロファイルを **プライベート ネットワーク** にします
+2. `.env` に `VPS_LAN=1` を設定します
+3. `start.cmd` で起動します。初回は Windows ファイアウォールの許可を求められるので、**「プライベート ネットワーク」だけにチェックし、「パブリック ネットワーク」は外して** 許可します
+4. PC のブラウザに「スマホで開く」画面（QR コードと 4 桁の PIN）が開くので、スマホのカメラで QR コードを読み取り、PIN を入力します
 
-WSL2 では Windows 側のポート転送やファイアウォールの設定も必要です。インターネットには公開しないでください。
+- `VPS_LAN=0`（既定）では `127.0.0.1` だけで待ち受け、PC 自身からしか開けません。`1` のときだけ全てのネットワークで待ち受けます
+- PIN は起動ごとにランダムに作り直し、ファイルやログには保存しません。PC 自身（localhost）からのアクセスには PIN は不要で、「スマホで開く」画面は PC 自身からしか表示されません
+- PIN を 5 回続けて間違えると PIN を作り直し、しばらく（30 秒。続けて間違えるたびに倍、最長 2 時間）入力を受け付けません。「スマホで開く」画面は 15 秒ごとに更新され、新しい PIN を表示します
+- 正しい PIN を入力した端末は、そのブラウザのタブを開いている間は再入力不要です。ページの再読み込みやアプリの再起動の後は、もう一度 PIN を入力してください
+- 同じ Wi-Fi の端末からは PIN 入力画面までは開けます。来客にはゲスト用の Wi-Fi を使ってもらってください
+- 通信は HTTP のままです（暗号化は WPA2 / WPA3 の自宅 Wi-Fi に任せます）。ルーターのポート転送などでインターネットに公開しないでください
+- PIN で保護するのは画面の表示と操作です。Streamlit が内部で提供するヘルスチェックなどのエンドポイントは PIN なしで応答します（ライブラリの内容は含みません）
+- QR コードの IP アドレスが違う（VPN 接続中など）ときは、`ipconfig` で Wi-Fi の IPv4 アドレスを確かめ、`.env` の `VPS_LAN_ADDRESS` に設定して再起動してください
 
 ## データの保存場所
 
-解析結果・評価・プレイリストは `data/studio.sqlite3`、ログは `data/logs/app.log` に保存します（`VPS_DATA_DIR` で変更可能）。どちらも Git 管理対象外です。スキーマを更新するときは、既存の DB を `studio.sqlite3.bak-v<バージョン>` にバックアップしてから移行します。
+解析結果・評価・プレイリストはプロジェクト直下の `data\studio.sqlite3`、ログは `data\logs\app.log` に保存します（`.env` の `VPS_DATA_DIR` で変更可能）。どちらも Git 管理対象外です。スキーマを更新するときは、既存の DB を `studio.sqlite3.bak-v<バージョン>` にバックアップしてから移行します。
 
 ## 開発
 
-開発規約は [AGENTS.md](AGENTS.md) を参照してください。
+開発は WSL / Linux で行う想定です。開発規約は [AGENTS.md](AGENTS.md) と [CLAUDE.md](CLAUDE.md) を参照してください。
+
+```bash
+uv sync
+uv run python -m volumio_playlist_studio.launcher   # 起動（ブラウザを開かない場合は --no-browser）
+```
 
 | 用途 | コマンド |
 |---|---|
 | フォーマット | `uv run ruff format .` |
+| 空行の挿入（インデントが戻る箇所） | `uv run python tools/insert_block_blank_lines.py src tests tools` |
 | リント | `uv run ruff check .` |
 | 型検査 | `uv run mypy` |
 | テスト（カバレッジ 90% 未満で失敗） | `uv run pytest` |

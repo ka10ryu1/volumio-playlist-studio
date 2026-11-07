@@ -47,12 +47,39 @@ PC 上のファイルパス（SMB 共有のマウント先からの相対パス�
 - 書き込みは画面で確認のチェックを入れ、ボタンを押したときだけ行う
 - 曲の追加に失敗したらそこで止め、曲ごとの結果（追加済み・失敗・未実行）を登録履歴に保存して画面に表示する
 
+## 通信方式の選択肢
+
+「通信方式」とは、このアプリが Volumio にどのような手段で命令を送るかのこと。Volumio には次の 2 つの公式 API がある。
+
+| | REST API | WebSocket API（Socket.io） |
+|---|---|---|
+| 仕組み | ブラウザで URL を開くのと同じ、1 回ごとの HTTP のやり取り | 接続を張ったまま、イベント名とデータを送受信する。Volumio の画面自体もこれを使う |
+| できること | プレイリスト一覧、ライブラリの参照、キューへの追加・再生 | 上記に加えて、プレイリストの作成・曲の追加・削除 |
+| Python から使う方法 | 標準ライブラリや httpx で簡単に呼べる | Socket.io のプロトコル（通常の WebSocket の上に独自の形式を重ねたもの）に対応したクライアントが必要 |
+
+プレイリストを作るには WebSocket API が必須になる。Socket.io はサーバーとクライアントのバージョンをそろえる必要があり、公開されている Volumio 3 のバックエンドは socket.io 2.x を使っている。Python の主要なクライアント（python-socketio）は、最新版が socket.io 3.x 以降にしか対応しないため、次のどちらかになる。
+
+- **案 A**: socket.io 2.x に対応する python-socketio の旧版（4.x 系）を依存関係に加える。保守が終わっている古いライブラリで、新しい Python での動作は未確認
+- **案 B**: 必要な 3 つのイベント（`listPlaylist`、`createPlaylist`、`addToPlaylist`）だけを、WebSocket ライブラリの上に自前で実装する。依存は小さいが、プロトコルの細部を自分で扱う
+
+どちらの場合も、ライブラリの参照（URI 一覧の取得）は REST API で行い、書き込みだけを WebSocket で行う構成を想定している。Volumio 4 のバックエンドが socket.io 3.x 以降に更新されていれば、最新の python-socketio をそのまま使える（案 C）。
+
+なお、Volumio が内部で使っている MPD（音楽再生エンジン）のプロトコルでもプレイリストを作れるが、Volumio の画面のプレイリストは Volumio 独自の管理のため、作ったものが画面に表示されない可能性が高く、採用しない。
+
+### Volumio 4 の socket.io のバージョンの確かめ方（未検証の手順）
+
+PC のブラウザで次の URL を開き、表示された内容を確認する。Volumio の WebSocket が別のポート（例: 3000）で待ち受けている場合は、`volumio.local:3000` のようにポートを付けて試す。
+
+1. `http://volumio.local/socket.io/?EIO=3&transport=polling` — `{"sid":...}` を含む応答なら socket.io 2.x と互換（案 A・B）
+2. `http://volumio.local/socket.io/?EIO=4&transport=polling` — 1 が「Unsupported protocol version」などのエラーで、2 が `0{"sid":...}` で始まる応答なら socket.io 3.x 以降（案 C）
+
 ## ユーザーに確認したいこと
 
-1. 実機クライアントの通信方式: WebSocket（Socket.io）で作成・追加まで行うか。その場合、socket.io 2.x 互換の Python クライアントを依存関係に加えてよいか
-2. REST API の `browse` で URI 一覧を取得する部分（読み取りのみ）を先に実装してよいか
-3. Volumio 4 Standard の実機で、上記の REST・WebSocket API が利用できるか（ブラウザで `http://volumio.local/api/v1/listplaylists` を開いて確認できる）
-4. 音楽ファイルの保存場所（microSD の内部ストレージ）が、Volumio 上で `music-library/INTERNAL/...` として見えるか
+1. 上記の URL の表示結果（Volumio 4 の socket.io のバージョンの判断材料）
+2. 案 A・B・C のどれで実装するか。案 A・C の場合は依存関係の追加の可否
+3. REST API の `browse` で URI 一覧を取得する部分（読み取りのみ）を先に実装してよいか
+4. ブラウザで `http://volumio.local/api/v1/listplaylists` を開いて、プレイリスト一覧が表示されるか
+5. 音楽ファイルの保存場所（microSD の内部ストレージ）が、Volumio の画面で `music-library/INTERNAL/...` として見えるか
 
 ## 実機での確認項目
 

@@ -11,6 +11,7 @@ dependencies = [
     "librosa>=1.0.0",
     "mutagen>=1.48.1",
     "python-dotenv>=1.2.4",
+    "qrcode>=8.2",
     "soundfile>=0.14.0",
     "streamlit>=1.67.0",
     "typesafe-sdk>=0.7.5",
@@ -27,6 +28,7 @@ dev = [
     "pytest>=9.2.0",
     "pytest-cov>=7.1.0",
     "ruff>=0.17.4",
+    "types-qrcode>=8.2.0.20260518",
 ]
 
 [tool.ruff]

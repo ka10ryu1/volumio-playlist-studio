@@ -8,9 +8,8 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
 import streamlit as st
-from dotenv import load_dotenv
 
-from volumio_playlist_studio.config import AppConfig, load_app_config
+from volumio_playlist_studio.config import AppConfig, load_app_config, load_env_file
 from volumio_playlist_studio.jobs import BackgroundJob, JobControl, JobState
 from volumio_playlist_studio.models import ClassificationSource
 from volumio_playlist_studio.sample_data import DEMO_LIBRARY_ROOT
@@ -65,8 +64,7 @@ def configure_logging(log_path: Path) -> None:
 
 def open_context() -> PageContext:
     """環境変数を読み込み、DB に接続して画面の描画に必要な情報をまとめる。"""
-    # .env の値は既存の環境変数を上書きしない
-    load_dotenv(override=False)
+    load_env_file()
     config = load_app_config()
     configure_logging(config.log_path)
     conn = connect(config.database_path)

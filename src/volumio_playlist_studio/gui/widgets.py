@@ -5,7 +5,7 @@ from pathlib import Path
 import streamlit as st
 
 from volumio_playlist_studio.gui.context import PageContext
-from volumio_playlist_studio.library_paths import LibraryPathError, is_wsl, resolve_library_input
+from volumio_playlist_studio.library_paths import LibraryPathError, detect_platform, resolve_library_input
 from volumio_playlist_studio.models import (
     ATTRIBUTE_LABELS,
     GENRE_LABELS,
@@ -79,14 +79,17 @@ def music_folder_form(ctx: PageContext) -> None:
         text = st.text_input(
             "音楽フォルダ",
             value=current,
-            placeholder="/mnt/volumio または C:\\Users\\...\\Music",
-            help="SMB 共有は WSL にマウントしてから、マウント先を指定してください（README 参照）。",
+            placeholder="\\\\volumio.local\\Internal Storage または C:\\Users\\...\\Music",
+            help=(
+                "Windows では Volumio の SMB 共有を UNC パスでそのまま指定できます。"
+                "WSL ではマウント先を指定します（README 参照）。"
+            ),
         )
         submitted = st.form_submit_button("保存")
 
     if submitted:
         try:
-            path = resolve_library_input(text, wsl=is_wsl())
+            path = resolve_library_input(text, host=detect_platform())
         except LibraryPathError as exc:
             st.error(exc.user_message)
             return

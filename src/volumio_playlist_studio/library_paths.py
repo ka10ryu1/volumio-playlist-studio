@@ -1,7 +1,9 @@
 import os
 import platform
 import re
-from pathlib import Path
+from collections.abc import Sequence
+from enum import StrEnum
+from pathlib import Path, PurePath, PureWindowsPath
 
 
 def to_library_relative_path(path: Path, library_root: Path) -> str:
@@ -49,43 +51,71 @@ class LibraryPathError(ValueError):
 _WINDOWS_DRIVE = re.compile(r"^(?P<drive>[A-Za-z]):[\\/](?P<rest>.*)$")
 
 
-def is_wsl() -> bool:
-    """WSL 上で動作しているかを返す。"""
-    return "microsoft" in platform.uname().release.lower()
+class HostPlatform(StrEnum):
+    """アプリを動かしている環境。音楽フォルダのパスの扱いが異なる。"""
+
+    WINDOWS = "windows"
+    WSL = "wsl"
+    POSIX = "posix"
 
 
-def resolve_library_input(text: str, *, wsl: bool) -> Path:
+def detect_platform() -> HostPlatform:
+    """アプリを動かしている環境を判定する。"""
+    if os.name == "nt":
+        return HostPlatform.WINDOWS
+
+    if "microsoft" in platform.uname().release.lower():
+        return HostPlatform.WSL
+
+    return HostPlatform.POSIX
+
+
+def resolve_library_input(text: str, *, host: HostPlatform) -> Path:
     r"""GUI で入力された音楽フォルダのパスを、この環境で開けるパスに変換する。
 
-    WSL 上では `C:\Music` のような Windows のドライブパスを `/mnt/c/Music` に変換する。
-    UNC パス（`\\volumio\share`）は WSL から直接開けないため、マウント手順を案内する例外を送出する。
+    - Windows: ドライブのパス（`C:\Music`）と UNC パス（`\volumio.local\共有名`）をそのまま使う
+    - WSL: ドライブのパスを `/mnt/c/Music` に変換する。UNC パスは WSL から直接開けないため、
+      マウント手順を案内する例外を送出する
+    - それ以外: 絶対パスだけを受け付ける
+
     ファイルシステムには触れず、存在確認は呼び出し側で行う。
 
     Args:
         text: 入力されたパス。前後の空白と引用符は無視する。
-        wsl: WSL 上で動作しているか。
+        host: アプリを動かしている環境。
 
     Returns:
         絶対パス。
 
     Raises:
-        LibraryPathError: 空、相対パス、UNC パス、または WSL 以外での Windows パスの場合。
+        LibraryPathError: 空、相対パス、またはこの環境では開けない形式のパスの場合。
     """
     cleaned = text.strip().strip("\"'").strip()
     if not cleaned:
         raise LibraryPathError("empty path", "音楽フォルダのパスを入力してください。")
 
+    if host == HostPlatform.WINDOWS:
+        if not PureWindowsPath(cleaned).is_absolute():
+            raise LibraryPathError(
+                "relative path",
+                "音楽フォルダは C:\\Music や \\\\volumio.local\\共有名 のような絶対パスで指定してください。",
+            )
+
+        return Path(cleaned)
+
     if cleaned.startswith(("\\\\", "//")):
         raise LibraryPathError(
             "unc path is not supported",
-            "UNC パス（\\\\サーバー名\\共有名）は直接開けません。SMB 共有を WSL にマウントしてから、"
+            "UNC パス（\\\\サーバー名\\共有名）は WSL から直接開けません。SMB 共有を WSL にマウントしてから、"
             "マウント先（例: /mnt/volumio）を指定してください。手順は README を参照してください。",
         )
 
     drive_match = _WINDOWS_DRIVE.match(cleaned)
     if drive_match is not None:
-        if not wsl:
-            raise LibraryPathError("windows path outside wsl", "Windows 形式のパスは WSL 上でのみ指定できます。")
+        if host != HostPlatform.WSL:
+            raise LibraryPathError(
+                "windows path outside windows", "Windows 形式のパスは Windows または WSL でのみ指定できます。"
+            )
 
         rest = drive_match.group("rest").replace("\\", "/")
         return Path("/mnt", drive_match.group("drive").lower(), *[p for p in rest.split("/") if p])
@@ -97,7 +127,7 @@ def resolve_library_input(text: str, *, wsl: bool) -> Path:
     return path
 
 
-def redact_paths(message: str, roots: list[Path]) -> str:
+def redact_paths(message: str, roots: Sequence[PurePath]) -> str:
     """ログや画面に出すメッセージから、ライブラリのルートとホームディレクトリの絶対パスを取り除く。
 
     外部ライブラリの例外メッセージには絶対パスが含まれることがあるため、記録する前にこの関数を通す。
@@ -111,7 +141,8 @@ def redact_paths(message: str, roots: list[Path]) -> str:
     """
     result = message
     # 長いパスから置き換え、ルートの一部だけが置き換わるのを防ぐ
-    for root in sorted({str(r) for r in roots}, key=len, reverse=True):
+    # Windows ではメッセージに `\` 区切りと `/` 区切りのどちらのパスも現れうるため、両方を置き換える
+    for root in sorted({form for r in roots for form in (str(r), r.as_posix())}, key=len, reverse=True):
         if root and root != "/":
             result = result.replace(root, "<library>")
 
