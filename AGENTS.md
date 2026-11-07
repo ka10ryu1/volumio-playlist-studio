@@ -24,6 +24,7 @@
   - 設定の読み込み: python-dotenv（`.env`）
   - LAN 接続用の QR コード: qrcode（型スタブは開発用の types-qrcode）
   - データベース: SQLite（標準ライブラリの `sqlite3`）
+  - 画面キャプチャの撮影（開発用）: Playwright（`tools/capture_screenshots.py`）
 
 | 用途 | コマンド |
 |---|---|
