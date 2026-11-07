@@ -94,7 +94,7 @@ flowchart LR
 | `audio_features` | 音響特徴量 | `analysis_version`、解析パラメータ、特徴量（JSON）、解析時点のファイルサイズ・更新日時、所要時間 |
 | `analysis_errors` | 解析エラー | 段階（tags/features/classification）、種類、メッセージ（絶対パスを除去済み）、バージョン、解決済みフラグ |
 | `classifications` | 分類結果 | `engine`・`engine_version`（楽曲ごとに一意）、応答したモデル名、結果（JSON。確信度・確率を含む） |
-| `evaluations` | 人手評価 | 用途（tuning/holdout）、評価時に表示した分類結果の ID、ジャンル・ムードの正誤と正解、属性の 5 段階評価 |
+| `evaluations` | 人手評価 | 用途（tuning/holdout）、評価時に表示した分類結果の ID と写し（分類結果の行は再分類で上書きされるため）、ジャンル・ムードの正誤と正解、属性の 5 段階評価 |
 | `playlists` / `playlist_tracks` | 保存したプレイリスト | 生成条件（JSON）、seed、使った分類結果の種類、満足度／曲順、適合度、手動追加、不適切フラグ |
 | `volumio_registrations` / `volumio_registration_items` | Volumio 登録履歴 | クライアントの種類、結果（success/partial/failed）、曲ごとの URI と結果 |
 | `app_settings` | GUI で変更する設定 | 音楽フォルダ、解析パラメータ、Jev 設定、分類結果の種類（秘密情報は保存しない） |
