@@ -7,7 +7,14 @@ authors = [
     { name = "Ryuichi Kato", email = "lsyp.tuiovjo.1231@gmail.com" }
 ]
 requires-python = ">=3.14"
-dependencies = []
+dependencies = [
+    "librosa>=1.0.0",
+    "mutagen>=1.48.1",
+    "python-dotenv>=1.2.4",
+    "soundfile>=0.14.0",
+    "streamlit>=1.67.0",
+    "typesafe-sdk>=0.7.5",
+]
 
 [build-system]
 requires = ["uv_build>=0.13.4,<0.14.0"]
@@ -71,6 +78,11 @@ max-complexity = 10
 python_version = "3.14"
 strict = true
 files = ["src", "tests"]
+
+# soundfile は型情報（py.typed・スタブ）を提供しておらず、typeshed にもスタブがないため、このモジュールに限り許可する
+[[tool.mypy.overrides]]
+module = ["soundfile"]
+ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
