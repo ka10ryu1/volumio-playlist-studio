@@ -58,16 +58,22 @@ def run_scan(conn: sqlite3.Connection, root: Path, control: JobControl) -> str:
     return message
 
 
-def run_analysis(conn: sqlite3.Connection, root: Path, control: JobControl) -> str:
-    """未解析の楽曲を音響解析する。"""
-    summary = analyze_pending(conn, root, settings_store.get_analysis_params(conn), control)
+def run_analysis(conn: sqlite3.Connection, root: Path, control: JobControl, *, retry_failed: bool = False) -> str:
+    """未解析の楽曲を音響解析する。retry_failed を指定すると、前回失敗した楽曲も再試行する。"""
+    summary = analyze_pending(conn, root, settings_store.get_analysis_params(conn), control, retry_failed=retry_failed)
     per_track = summary.seconds_per_track
     timing = "" if per_track is None else f"、1 曲あたり平均 {per_track:.1f} 秒"
     cancelled = "（中断しました）" if summary.cancelled else ""
-    return (
+    message = (
         f"解析 {summary.analyzed} 曲、失敗 {summary.failed} 曲、未対応形式 {summary.unsupported} 曲"
         f"（合計 {summary.elapsed_sec:.1f} 秒{timing}）{cancelled}"
     )
+    if summary.skipped_failed:
+        message += (
+            f" 前回失敗した {summary.skipped_failed} 曲は再試行していません（「失敗した曲を再試行」で再試行できます）。"
+        )
+
+    return message
 
 
 def estimate_jev(conn: sqlite3.Connection, library_root: str) -> JevEstimate:

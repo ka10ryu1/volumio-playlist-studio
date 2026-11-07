@@ -12,6 +12,7 @@ from volumio_playlist_studio.storage.analysis import (
     ErrorRecord,
     FeatureRun,
     classification_versions,
+    failed_track_ids,
     list_errors,
     load_classifications,
     load_features,
@@ -277,3 +278,30 @@ def test_evaluation_keeps_snapshot_of_shown_classification(
     label = load_labels(db)[track_id]
     assert label.classification_snapshot == tag_only
     assert load_classifications(db, "rules")[track_id].result == reanalyzed
+
+
+def test_record_error_keeps_only_latest_unresolved_error_per_track_and_stage(db: sqlite3.Connection) -> None:
+    a, b = _add(db, "a.flac"), _add(db, "b.flac")
+    record_error(db, a, ErrorRecord("features", "LibsndfileError", "1 回目", "v1", 10, 1))
+    record_error(db, a, ErrorRecord("features", "LibsndfileError", "2 回目", "v1", 10, 1))
+    record_error(db, a, ErrorRecord("classification", "Timeout", "別の段階", "q1"))
+    record_error(db, b, ErrorRecord("features", "LibsndfileError", "別の曲", "v1", 10, 1))
+    # 楽曲に紐づかないエラー（読めないフォルダなど）は、まとめずにすべて残す
+    record_error(db, None, ErrorRecord("tags", "DirectoryReadError", "フォルダ 1", None))
+    record_error(db, None, ErrorRecord("tags", "DirectoryReadError", "フォルダ 2", None))
+
+    messages = sorted(e.message for e in list_errors(db, ROOT))
+
+    assert messages == sorted(["2 回目", "別の段階", "別の曲", "フォルダ 1", "フォルダ 2"])
+
+
+def test_failed_track_ids_follow_file_changes_and_version(db: sqlite3.Connection) -> None:
+    track_id = _add(db, "a.flac", file_size=10, mtime_ns=1)
+    record_error(db, track_id, ErrorRecord("features", "LibsndfileError", "broken", "v1", 10, 1))
+
+    assert failed_track_ids(db, ROOT, "v1") == {track_id}
+    # 解析ロジックのバージョンが変われば、改めて解析する
+    assert failed_track_ids(db, ROOT, "v2") == set()
+    # ファイルが更新されれば、改めて解析する
+    _add(db, "a.flac", file_size=10, mtime_ns=2)
+    assert failed_track_ids(db, ROOT, "v1") == set()

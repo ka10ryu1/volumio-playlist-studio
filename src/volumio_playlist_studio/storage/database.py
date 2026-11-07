@@ -181,6 +181,11 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         )
         """,
     ),
+    (
+        # 解析に失敗したときのファイルの状態。ファイルが変わっていない限り、同じ解析バージョンでは再試行しないために使う
+        "ALTER TABLE analysis_errors ADD COLUMN file_size INTEGER",
+        "ALTER TABLE analysis_errors ADD COLUMN mtime_ns INTEGER",
+    ),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

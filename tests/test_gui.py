@@ -142,6 +142,19 @@ def test_library_view_scans_and_analyzes_real_folder(app_db: sqlite3.Connection,
     at.run()
     assert any("音響解析 が完了しました" in s.value and "解析 4 曲" in s.value for s in at.success)
 
+    # 壊れたファイルを追加して解析すると、失敗した曲の再試行ボタンが表示される
+    (folder / "壊れた.flac").write_bytes(b"broken" * 100)
+    click(at, "スキャン（追加・更新を反映）")
+    wait_for_jobs(at)
+    at.run()
+    click(at, "未解析の曲を解析")
+    wait_for_jobs(at)
+    at.run()
+    click(at, "失敗した曲を再試行（1 曲）")
+    wait_for_jobs(at)
+    at.run()
+    assert any("音響解析（再試行） が完了しました" in s.value and "失敗 1 曲" in s.value for s in at.success)
+
 
 def test_music_folder_form_rejects_invalid_paths(app_db: sqlite3.Connection, tmp_path: Path) -> None:
     at = run_view("library")
