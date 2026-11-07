@@ -19,6 +19,7 @@ import time
 import webbrowser
 from collections.abc import Callable
 from http import HTTPStatus
+from typing import Protocol
 
 from volumio_playlist_studio.config import PROJECT_ROOT, AppConfig, load_app_config, load_env_file
 from volumio_playlist_studio.lan_access import lan_ip
@@ -156,8 +157,51 @@ def main(argv: list[str] | None = None) -> int:
         threading.Thread(target=open_when_ready, args=(open_url, config.port), daemon=True).start()
 
     # .streamlit/config.toml を読み込ませるため、プロジェクト直下で実行する
-    completed = subprocess.run(build_command(config), cwd=PROJECT_ROOT, check=False)  # noqa: S603 - 引数は固定値と設定値のみ
-    return completed.returncode
+    process = subprocess.Popen(build_command(config), cwd=PROJECT_ROOT)  # noqa: S603 - 引数は固定値と設定値のみ
+    return wait_for_streamlit(process)
+
+
+class _Process(Protocol):
+    """終了を待てるプロセス（subprocess.Popen と同じ操作）。"""
+
+    def wait(self, timeout: float | None = None) -> int:
+        """終了を待ち、終了コードを返す。"""
+        ...
+
+    def terminate(self) -> None:
+        """終了させる。"""
+        ...
+
+
+def wait_for_streamlit(process: _Process, shutdown_timeout: float = 15.0) -> int:
+    """Streamlit の終了を待つ。Ctrl+C で止めた場合は、正常な終了として扱う。
+
+    端末での Ctrl+C は Streamlit とこのプロセスの両方に届く。Streamlit は自分で停止処理をするため、
+    ここでは終了を待つだけにし、割り込みのトレースバックを表示しない。
+
+    Args:
+        process: 起動した Streamlit のプロセス。
+        shutdown_timeout: Ctrl+C の後、Streamlit の終了を待つ上限秒数。超えたら強制的に終了させる。
+
+    Returns:
+        終了コード。Ctrl+C で止めた場合は 0。
+    """
+    try:
+        return process.wait()
+    except KeyboardInterrupt:
+        try:
+            process.wait(timeout=shutdown_timeout)
+        except subprocess.TimeoutExpired:
+            logger.warning("streamlit did not stop: action=terminate")
+            process.terminate()
+            process.wait()
+        except KeyboardInterrupt:
+            # 停止を待つ間にもう一度 Ctrl+C が押された場合は、待たずに終了させる
+            process.terminate()
+            process.wait()
+
+        _say("Volumio Playlist Studio を終了しました。")
+        return 0
 
 
 def _say(message: str) -> None:

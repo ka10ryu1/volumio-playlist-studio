@@ -45,9 +45,9 @@ try {
     & $venvPython -m volumio_playlist_studio.launcher
     $appExit = $LASTEXITCODE
     $ErrorActionPreference = "Stop"
-    # Ctrl+C で止めた場合も 0 以外になるため、ログの確認を案内するだけにする
+    # Ctrl+C での終了は launcher が正常終了（0）として扱う
     if ($appExit -ne 0) {
-        Write-Host "アプリが終了コード $appExit で停止しました。Ctrl+C で止めた場合は問題ありません。それ以外は上のメッセージと data\logs\app.log を確認してください。" -ForegroundColor Yellow
+        Fail "アプリが終了コード $appExit で停止しました。上のメッセージと data\logs\app.log を確認してください。"
     }
     Finish 0
 } catch {

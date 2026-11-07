@@ -104,6 +104,28 @@ def test_main_refuses_port_used_by_other_program(
     assert "VPS_PORT" in capsys.readouterr().out
 
 
+class FakeProcess:
+    """Streamlit のプロセスの代わり。wait の結果を順に返す（例外なら送出する）。"""
+
+    def __init__(self, command: list[str], cwd: Path, results: list[int | BaseException]) -> None:
+        self.command = command
+        self.cwd = cwd
+        self.results = results
+        self.terminated = False
+        self.wait_timeouts: list[float | None] = []
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.wait_timeouts.append(timeout)
+        result = self.results.pop(0)
+        if isinstance(result, BaseException):
+            raise result
+
+        return result
+
+    def terminate(self) -> None:
+        self.terminated = True
+
+
 def test_main_starts_streamlit_in_project_root(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -111,22 +133,41 @@ def test_main_starts_streamlit_in_project_root(
     monkeypatch.setenv("VPS_PORT", str(port))
     monkeypatch.setenv("VPS_LAN", "1")
     monkeypatch.setenv("VPS_LAN_ADDRESS", "192.168.1.10")
-    calls: list[tuple[list[str], Path]] = []
+    processes: list[FakeProcess] = []
 
     # Streamlit のプロセスは起動せず、渡されたコマンドだけを記録する（外部プロセスの境界）
-    def fake_run(command: list[str], cwd: Path, check: bool) -> subprocess.CompletedProcess[bytes]:
-        calls.append((command, cwd))
-        return subprocess.CompletedProcess(command, 3)
+    def fake_popen(command: list[str], cwd: Path) -> FakeProcess:
+        processes.append(FakeProcess(command, cwd, [3]))
+        return processes[-1]
 
-    monkeypatch.setattr(subprocess, "run", fake_run)
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
 
     assert launcher.main(["--no-browser"]) == 3
 
-    [(command, cwd)] = calls
-    assert cwd == ROOT
-    assert command[command.index("--server.port") + 1] == str(port)
-    assert command[command.index("--server.address") + 1] == launcher.ALL_INTERFACES
+    [process] = processes
+    assert process.cwd == ROOT
+    assert process.command[process.command.index("--server.port") + 1] == str(port)
+    assert process.command[process.command.index("--server.address") + 1] == launcher.ALL_INTERFACES
     assert f"http://192.168.1.10:{port}/" in capsys.readouterr().out
+
+
+def test_ctrl_c_waits_for_streamlit_and_exits_normally(capsys: pytest.CaptureFixture[str]) -> None:
+    process = FakeProcess([], ROOT, [KeyboardInterrupt(), -2])
+
+    assert launcher.wait_for_streamlit(process, shutdown_timeout=5) == 0
+
+    assert process.wait_timeouts == [None, 5]
+    assert not process.terminated
+    assert "終了しました" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("second", [subprocess.TimeoutExpired("streamlit", 5), KeyboardInterrupt()])
+def test_streamlit_is_terminated_if_it_does_not_stop(second: BaseException) -> None:
+    process = FakeProcess([], ROOT, [KeyboardInterrupt(), second, -15])
+
+    assert launcher.wait_for_streamlit(process, shutdown_timeout=5) == 0
+
+    assert process.terminated
 
 
 @pytest.mark.parametrize(("launcher_name", "script_name"), [("setup.cmd", "setup.ps1"), ("start.cmd", "start.ps1")])
