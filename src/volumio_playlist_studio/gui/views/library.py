@@ -18,7 +18,7 @@ from volumio_playlist_studio.gui.widgets import (
     music_folder_form,
     track_label,
 )
-from volumio_playlist_studio.models import Track
+from volumio_playlist_studio.models import ClassificationResult, Track
 from volumio_playlist_studio.storage import analysis as analysis_store
 from volumio_playlist_studio.storage.tracks import duplicate_groups, list_tracks
 from volumio_playlist_studio.workflows import estimate_jev, run_analysis, run_jev, run_scan
@@ -54,6 +54,15 @@ def _actions(ctx: PageContext, library_root: str) -> None:
 
     if cols[1].button("未解析の曲を解析", disabled=busy, width="stretch"):
         start_job("音響解析", ctx.config.database_path, lambda conn, control: run_analysis(conn, root, control))
+        st.rerun()
+
+    failed = analysis_store.failed_track_ids(ctx.conn, library_root, ANALYSIS_VERSION)
+    if failed and st.button(f"失敗した曲を再試行（{len(failed)} 曲）", disabled=busy):
+        start_job(
+            "音響解析（再試行）",
+            ctx.config.database_path,
+            lambda conn, control: run_analysis(conn, root, control, retry_failed=True),
+        )
         st.rerun()
 
     with st.expander("Jev で判定する（API を使用）"):
@@ -95,29 +104,13 @@ def _track_table(ctx: PageContext, tracks: list[Track]) -> None:
     shown = [t for t in tracks if _matches(t, query)] if query else tracks
 
     classifications = effective_classifications(ctx.conn, ctx.classification_source)
-    pending = {t.id for t in analysis_store.tracks_needing_analysis(ctx.conn, ctx.library_root or "", ANALYSIS_VERSION)}
+    library_root = ctx.library_root or ""
+    pending = {t.id for t in analysis_store.tracks_needing_analysis(ctx.conn, library_root, ANALYSIS_VERSION)}
+    failed = analysis_store.failed_track_ids(ctx.conn, library_root, ANALYSIS_VERSION)
     rows = []
     for track in shown:
         c = classifications.get(track.id)
-        if not is_analyzable(track):
-            state = "未対応形式"
-        elif track.id in pending:
-            state = "未解析"
-        else:
-            state = "解析済み"
-
-        rows.append(
-            {
-                "曲名": track.display_title,
-                "アーティスト": track.display_artist,
-                "アルバム": track.album or "",
-                "ジャンル（タグ）": track.genre or "",
-                "判定ジャンル": genre_label(None if c is None else c.genre),
-                "ムード": mood_label(None if c is None else c.mood),
-                "時間": format_duration(track.duration_sec),
-                "解析": state,
-            }
-        )
+        rows.append(_track_row(track, c, _analysis_state(track, pending, failed)))
 
     st.dataframe(rows, hide_index=True, width="stretch")
 
@@ -127,6 +120,29 @@ def _track_table(ctx: PageContext, tracks: list[Track]) -> None:
     selected = st.selectbox("詳細を表示する曲", shown, format_func=track_label)
     if selected is not None:
         _track_detail(ctx, selected)
+
+
+def _analysis_state(track: Track, pending: set[int], failed: set[int]) -> str:
+    if not is_analyzable(track):
+        return "未対応形式"
+
+    if track.id in failed:
+        return "解析失敗"
+
+    return "未解析" if track.id in pending else "解析済み"
+
+
+def _track_row(track: Track, classification: ClassificationResult | None, state: str) -> dict[str, str]:
+    return {
+        "曲名": track.display_title,
+        "アーティスト": track.display_artist,
+        "アルバム": track.album or "",
+        "ジャンル（タグ）": track.genre or "",
+        "判定ジャンル": genre_label(None if classification is None else classification.genre),
+        "ムード": mood_label(None if classification is None else classification.mood),
+        "時間": format_duration(track.duration_sec),
+        "解析": state,
+    }
 
 
 def _track_detail(ctx: PageContext, track: Track) -> None:

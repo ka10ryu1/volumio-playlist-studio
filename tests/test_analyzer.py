@@ -8,8 +8,10 @@ import pytest
 from conftest import AudioWriter, clicks, sine
 
 from volumio_playlist_studio.analyzer import analyze_pending, classify_with_rules
+from volumio_playlist_studio.catalog import dashboard_stats
 from volumio_playlist_studio.config import ANALYSIS_VERSION, AnalysisParams
 from volumio_playlist_studio.jobs import JobControl
+from volumio_playlist_studio.models import ClassificationSource
 from volumio_playlist_studio.scanner import scan_library
 from volumio_playlist_studio.storage import settings_store
 from volumio_playlist_studio.storage.analysis import (
@@ -129,3 +131,45 @@ def test_analysis_does_not_modify_music_files(db: sqlite3.Connection, library: P
 
     after = {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in library.rglob("*") if p.is_file()}
     assert after == before
+
+
+def test_failed_files_are_not_retried_until_file_changes_or_retry_requested(
+    db: sqlite3.Connection, library: Path, write_audio: AudioWriter
+) -> None:
+    broken = library / "壊れた.flac"
+    broken.write_bytes(b"broken" * 100)
+    scan_library(db, library)
+    first = analyze_pending(db, library, PARAMS)
+
+    second = analyze_pending(db, library, PARAMS)
+    message = run_analysis(db, library, JobControl())
+
+    assert (first.analyzed, first.failed) == (2, 1)
+    # 同じ解析バージョンで失敗済みで、ファイルが変わっていない曲は再試行しない
+    assert (second.analyzed, second.failed, second.skipped_failed) == (0, 0, 1)
+    assert "前回失敗した 1 曲は再試行していません" in message
+    assert len([e for e in list_errors(db, library.as_posix()) if e.stage == "features"]) == 1
+
+    retried = analyze_pending(db, library, PARAMS, retry_failed=True)
+    assert (retried.failed, retried.skipped_failed) == (1, 0)
+    # 再試行しても、未解決のエラーは曲ごとに最新の 1 件だけ
+    assert len([e for e in list_errors(db, library.as_posix()) if e.stage == "features"]) == 1
+
+    # ファイルを直すと、自動で解析の対象に戻る
+    write_audio(broken, sine(15.0))
+    stat = broken.stat()
+    os.utime(broken, ns=(stat.st_atime_ns, stat.st_mtime_ns + 1_000_000_000))
+    scan_library(db, library)
+    fixed = analyze_pending(db, library, PARAMS)
+    assert (fixed.analyzed, fixed.failed, fixed.skipped_failed) == (1, 0, 0)
+    assert [e for e in list_errors(db, library.as_posix()) if e.stage == "features"] == []
+
+
+def test_dashboard_counts_failed_tracks_separately(db: sqlite3.Connection, library: Path) -> None:
+    (library / "壊れた.flac").write_bytes(b"broken" * 100)
+    scan_library(db, library)
+    analyze_pending(db, library, PARAMS)
+
+    stats = dashboard_stats(db, library.as_posix(), ClassificationSource.RULES)
+
+    assert (stats.total, stats.analyzed, stats.unanalyzed, stats.failed) == (3, 2, 0, 1)

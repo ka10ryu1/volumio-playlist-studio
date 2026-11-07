@@ -31,12 +31,20 @@ class FeatureRun:
 
 @dataclass(frozen=True)
 class ErrorRecord:
-    """記録する解析エラー。message には絶対パスや機密情報を含めないこと。"""
+    """記録する解析エラー。message には絶対パスや機密情報を含めないこと。
+
+    Attributes:
+        file_size: 失敗したときのファイルサイズ。ファイルが変わったかの判定に使う
+            （ファイルに関係しないエラーでは None）。
+        mtime_ns: 失敗したときのファイルの更新日時。
+    """
 
     stage: str
     error_type: str
     message: str
     version: str | None
+    file_size: int | None = None
+    mtime_ns: int | None = None
 
 
 @dataclass(frozen=True)
@@ -111,14 +119,47 @@ def tracks_needing_analysis(conn: sqlite3.Connection, library_root: str, analysi
 
 
 def record_error(conn: sqlite3.Connection, track_id: int | None, error: ErrorRecord) -> None:
-    """解析エラーを記録する。"""
+    """解析エラーを記録する。
+
+    同じ楽曲・同じ段階の未解決のエラーは解決済みにし、楽曲ごとに最新のエラーだけを未解決として残す
+    （同じ曲を再試行するたびにエラーが増えないように）。
+    """
+    if track_id is not None:
+        conn.execute(
+            "UPDATE analysis_errors SET resolved = 1 WHERE track_id = ? AND stage = ? AND resolved = 0",
+            (track_id, error.stage),
+        )
+
     conn.execute(
         """
-        INSERT INTO analysis_errors (track_id, stage, error_type, message, version, occurred_at)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO analysis_errors (track_id, stage, error_type, message, version, occurred_at, file_size, mtime_ns)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
-        (track_id, error.stage, error.error_type, error.message, error.version, utc_now()),
+        (
+            track_id,
+            error.stage,
+            error.error_type,
+            error.message,
+            error.version,
+            utc_now(),
+            error.file_size,
+            error.mtime_ns,
+        ),
     )
+
+
+def failed_track_ids(conn: sqlite3.Connection, library_root: str, analysis_version: str) -> set[int]:
+    """同じ解析バージョンで解析に失敗し、その後ファイルが変わっていない楽曲の ID を返す。"""
+    rows = conn.execute(
+        """
+        SELECT DISTINCT t.id FROM tracks t
+        JOIN analysis_errors e ON e.track_id = t.id
+        WHERE t.library_root = ? AND t.status = 'active' AND e.stage = 'features' AND e.resolved = 0
+          AND e.version = ? AND e.file_size = t.file_size AND e.mtime_ns = t.mtime_ns
+        """,
+        (library_root, analysis_version),
+    ).fetchall()
+    return {row["id"] for row in rows}
 
 
 def list_errors(conn: sqlite3.Connection, library_root: str, *, limit: int = 200) -> list[AnalysisError]:

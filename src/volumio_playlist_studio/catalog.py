@@ -24,6 +24,8 @@ class DashboardStats:
 
     Attributes:
         unanalyzed: 音響解析に対応した形式で、未解析（または解析後にファイルが更新された）曲数。
+            解析に失敗した曲は含めない。
+        failed: 同じ解析バージョンで解析に失敗し、その後ファイルが変わっていない曲数。
         unsupported: 音響解析に未対応の形式（M4A など）の曲数。
         genre_distribution: 選曲に使うジャンルごとの曲数。
     """
@@ -31,6 +33,7 @@ class DashboardStats:
     total: int
     analyzed: int
     unanalyzed: int
+    failed: int
     unsupported: int
     jev_classified: int
     error_count: int
@@ -76,7 +79,9 @@ def dashboard_stats(conn: sqlite3.Connection, library_root: str, source: Classif
     tracks = list_tracks(conn, library_root)
     pending_ids = {t.id for t in analysis_store.tracks_needing_analysis(conn, library_root, ANALYSIS_VERSION)}
     unsupported = sum(1 for t in tracks if not is_analyzable(t))
-    unanalyzed = sum(1 for t in tracks if t.id in pending_ids and is_analyzable(t))
+    failed_ids = analysis_store.failed_track_ids(conn, library_root, ANALYSIS_VERSION)
+    failed = sum(1 for t in tracks if t.id in pending_ids and t.id in failed_ids and is_analyzable(t))
+    unanalyzed = sum(1 for t in tracks if t.id in pending_ids and t.id not in failed_ids and is_analyzable(t))
     track_ids = {t.id for t in tracks}
     jev = analysis_store.load_classifications(conn, JEV_ENGINE)
     genres = Counter(
@@ -85,8 +90,9 @@ def dashboard_stats(conn: sqlite3.Connection, library_root: str, source: Classif
     )
     return DashboardStats(
         total=len(tracks),
-        analyzed=len(tracks) - unanalyzed - unsupported,
+        analyzed=len(tracks) - unanalyzed - failed - unsupported,
         unanalyzed=unanalyzed,
+        failed=failed,
         unsupported=unsupported,
         jev_classified=sum(1 for track_id in jev if track_id in track_ids),
         error_count=len(analysis_store.list_errors(conn, library_root)),

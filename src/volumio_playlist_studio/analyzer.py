@@ -38,6 +38,7 @@ class AnalysisRunSummary:
     Attributes:
         unsupported: 音響解析に未対応の形式のため、解析しなかった曲数。
         cancelled: 途中で中断したか。
+        skipped_failed: 前回失敗し、ファイルが変わっていないため再試行しなかった曲数。
     """
 
     analyzed: int
@@ -45,6 +46,7 @@ class AnalysisRunSummary:
     unsupported: int
     elapsed_sec: float
     cancelled: bool
+    skipped_failed: int = 0
 
     @property
     def seconds_per_track(self) -> float | None:
@@ -63,14 +65,20 @@ def analyze_pending(
     root: Path,
     params: AnalysisParams,
     control: JobControl | None = None,
+    *,
+    retry_failed: bool = False,
 ) -> AnalysisRunSummary:
     """未解析の楽曲を解析する。
+
+    同じ解析バージョンで失敗済みで、その後ファイルが変わっていない楽曲は、retry_failed を指定しない限り再試行しない
+    （壊れたファイルを解析のたびに読み直さないように）。
 
     Args:
         conn: DB 接続。
         root: 音楽ライブラリのルート（絶対パス）。
         params: 解析パラメータ。
         control: 進捗通知と中断の受け付け。
+        retry_failed: 失敗済みの楽曲も再試行するか。
 
     Returns:
         実行結果。
@@ -79,11 +87,18 @@ def analyze_pending(
     params.validate()
     started = time.monotonic()
     pending = analysis_store.tracks_needing_analysis(conn, root.as_posix(), ANALYSIS_VERSION)
-    targets = [t for t in pending if is_analyzable(t)]
+    analyzable = [t for t in pending if is_analyzable(t)]
+    failed_before = set() if retry_failed else analysis_store.failed_track_ids(conn, root.as_posix(), ANALYSIS_VERSION)
+    targets = [t for t in analyzable if t.id not in failed_before]
     rules = RuleClassifier()
     analyzed = failed = 0
     cancelled = False
-    logger.info("analysis started: targets=%d unsupported=%d", len(targets), len(pending) - len(targets))
+    logger.info(
+        "analysis started: targets=%d unsupported=%d skipped_failed=%d",
+        len(targets),
+        len(pending) - len(analyzable),
+        len(analyzable) - len(targets),
+    )
 
     for index, track in enumerate(targets):
         if control.is_cancelled():
@@ -100,9 +115,10 @@ def analyze_pending(
     summary = AnalysisRunSummary(
         analyzed=analyzed,
         failed=failed,
-        unsupported=len(pending) - len(targets),
+        unsupported=len(pending) - len(analyzable),
         elapsed_sec=time.monotonic() - started,
         cancelled=cancelled,
+        skipped_failed=len(analyzable) - len(targets),
     )
     logger.info(
         "analysis finished: analyzed=%d failed=%d unsupported=%d cancelled=%s elapsed_sec=%.1f",
@@ -126,7 +142,11 @@ def _analyze_one(
         message = redact_paths(f"{type(exc).__name__}: {exc}", [root])
         with transaction(conn):
             analysis_store.record_error(
-                conn, track.id, analysis_store.ErrorRecord("features", type(exc).__name__, message, ANALYSIS_VERSION)
+                conn,
+                track.id,
+                analysis_store.ErrorRecord(
+                    "features", type(exc).__name__, message, ANALYSIS_VERSION, track.file_size, track.mtime_ns
+                ),
             )
 
         logger.warning("analysis failed: path=%s error=%s", track.rel_path, type(exc).__name__)
