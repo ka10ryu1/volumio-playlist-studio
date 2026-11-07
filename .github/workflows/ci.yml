@@ -1,0 +1,51 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+# 同じブランチで新しい push があったら、古い実行を取り消す
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: lint-and-test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      # サードパーティのアクションはタグの差し替えに備えてコミット SHA で固定する
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+
+      # uv.lock と pyproject.toml がずれている場合は失敗させる
+      - name: Install dependencies
+        id: sync
+        run: uv sync --locked
+
+      # 1 つの検証が失敗しても残りを実行し、問題をまとめて把握できるようにする
+      - name: Format
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
+        run: uv run --no-sync ruff format --check .
+
+      - name: Lint
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
+        run: uv run --no-sync ruff check --output-format=github .
+
+      - name: Type check
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
+        run: uv run --no-sync mypy
+
+      - name: Test
+        if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
+        run: uv run --no-sync pytest
