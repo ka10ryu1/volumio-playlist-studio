@@ -4,6 +4,10 @@
 
 Raspberry Pi 上の Volumio に保存した音楽を PC から SMB 共有経由で読み取り、PC 側で解析・選曲します。Volumio は音楽の保存と再生だけを担当し、Volumio 本体では解析を行いません。実行時に Claude は使わず、Python アプリと TypeSafe Jev API（任意）だけで動作します。
 
+![プレイリスト作成画面](docs/images/playlist-top.png)
+
+プレイリスト作成画面の上部です（サンプルデータの架空の楽曲）。この続きと、ほかの画面のキャプチャは [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md) にまとめています。
+
 ## 実装状況
 
 | 機能 | 状況 |
@@ -162,6 +166,7 @@ uv run python -m volumio_playlist_studio.launcher   # 起動（ブラウザを�
 | リント | `uv run ruff check .` |
 | 型検査 | `uv run mypy` |
 | テスト（カバレッジ 90% 未満で失敗） | `uv run pytest` |
+| 画面キャプチャの撮り直し（[docs/SCREENSHOTS.md](docs/SCREENSHOTS.md#撮り直し方)） | `uv run python tools/capture_screenshots.py` |
 
 テストは外部サービスと通信しません（Jev は HTTP 層をモック、Volumio は模擬サーバーとモッククライアント）。テスト用の音声はテスト内で生成します。Volumio 実機での確認（読み取りのみ）は、明示的に実行します。
 
@@ -171,6 +176,7 @@ VPS_TEST_VOLUMIO_HOST=volumio.local uv run pytest -m integration tests/test_volu
 
 ## ドキュメント
 
+- [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md): 各画面のキャプチャと撮り直し方
 - [docs/architecture.md](docs/architecture.md): アーキテクチャ、データフロー、データモデル、実装タスク
 - [docs/audio-features.md](docs/audio-features.md): 音響特徴量の意味と分類への使い方
 - [docs/jev.md](docs/jev.md): Jev による分類の設計
