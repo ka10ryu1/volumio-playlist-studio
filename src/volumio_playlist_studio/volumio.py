@@ -186,6 +186,10 @@ def collect_track_uris(
 
         control.report(len(visited) - len(queue), len(visited))
 
+    # 最後のフォルダの取得中に中断された場合も、不完全な一覧を返さない
+    if control.is_cancelled():
+        raise VolumioError("cancelled")
+
     return uris
 
 

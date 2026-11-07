@@ -16,7 +16,7 @@ import pytest
 
 from volumio_playlist_studio.jobs import JobControl
 from volumio_playlist_studio.storage.volumio_library import last_collected_at, load_uris
-from volumio_playlist_studio.volumio import VolumioError, collect_track_uris
+from volumio_playlist_studio.volumio import BrowseItem, VolumioError, collect_track_uris
 from volumio_playlist_studio.volumio_rest import VolumioRestClient, parse_host
 from volumio_playlist_studio.workflows import run_volumio_sync
 
@@ -45,8 +45,16 @@ PLAYLISTS = ["ゲームサントラ（オススメ）", "ボカロ"]
 class FakeVolumio:
     """Volumio の REST API を模擬するサーバー。受け取ったリクエストを記録する。"""
 
-    def __init__(self, *, paging: bool = True, status: int = 200, body: bytes | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        paging: bool = True,
+        status: int = 200,
+        body: bytes | None = None,
+        library: dict[str, list[dict[str, object]]] | None = None,
+    ) -> None:
         self.requests: list[tuple[str, str]] = []
+        self.library = LIBRARY if library is None else library
         fake = self
 
         class Handler(BaseHTTPRequestHandler):
@@ -77,7 +85,7 @@ class FakeVolumio:
             return json.dumps(PLAYLISTS).encode()
 
         query = parse_qs(parts.query)
-        items = LIBRARY.get(query["uri"][0], [])
+        items = self.library.get(query["uri"][0], [])
         listing: dict[str, object] = {"items": items}
         if self.paging:
             offset, limit = int(query["offset"][0]), int(query["limit"][0])
@@ -225,3 +233,66 @@ def test_sync_saves_and_replaces_uris(db: sqlite3.Connection, volumio: FakeVolum
     assert len(load_uris(db, volumio.host)) == 6
     assert last_collected_at(db, volumio.host) is not None
     assert load_uris(db, "other-host") == []
+
+
+def test_page_with_only_skipped_items_does_not_stop_paging() -> None:
+    radio: dict[str, object] = {"type": "webradio", "title": "ラジオ", "uri": "http://radio.example/stream"}
+    songs: list[dict[str, object]] = [
+        {"type": "song", "title": f"曲{i}", "uri": f"music-library/INTERNAL/曲{i}.flac"} for i in range(3)
+    ]
+    fake = FakeVolumio(library={"music-library/INTERNAL": [radio, radio, *songs]})
+    try:
+        items = VolumioRestClient(fake.host, page_size=2).browse("music-library/INTERNAL")
+    finally:
+        fake.close()
+
+    # 最初の 2 件はどちらも対象外だが、続きの曲も取得する
+    assert [i.title for i in items] == ["曲0", "曲1", "曲2"]
+    assert len(fake.requests) == 3
+
+
+def test_browse_stops_between_pages_when_requested(volumio: FakeVolumio) -> None:
+    calls = iter([False, True])
+    client = VolumioRestClient(volumio.host, page_size=2, should_stop=lambda: next(calls))
+
+    with pytest.raises(VolumioError, match="cancelled"):
+        client.browse("music-library/INTERNAL/アーティスト")
+
+    assert len(volumio.requests) == 1
+
+
+class CancelDuringBrowse:
+    """フォルダを取得している間に中断が要求された状況を再現する、読み取り用のクライアント。"""
+
+    def __init__(self, cancel: threading.Event) -> None:
+        self.cancel = cancel
+
+    @property
+    def kind(self) -> str:
+        return "fake"
+
+    def list_playlists(self) -> list[str]:
+        return []
+
+    def browse(self, uri: str) -> list[BrowseItem]:
+        self.cancel.set()
+        return [BrowseItem("song", "曲", f"{uri}/曲.flac")]
+
+
+def test_cancel_during_final_folder_does_not_return_partial_result() -> None:
+    cancel = threading.Event()
+
+    # 最後（唯一）のフォルダを取得している間に中断が要求される
+    with pytest.raises(VolumioError, match="cancelled"):
+        collect_track_uris(CancelDuringBrowse(cancel), control=JobControl(cancel=cancel))
+
+
+def test_cancelled_sync_keeps_previous_uris(db: sqlite3.Connection, volumio: FakeVolumio) -> None:
+    run_volumio_sync(db, volumio.host, JobControl())
+    cancel = threading.Event()
+    cancel.set()
+
+    with pytest.raises(VolumioError, match="cancelled"):
+        run_volumio_sync(db, volumio.host, JobControl(cancel=cancel))
+
+    assert len(load_uris(db, volumio.host)) == 6

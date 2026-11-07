@@ -9,6 +9,8 @@ import http.client
 import json
 import logging
 import re
+from collections.abc import Callable
+from dataclasses import dataclass
 from http import HTTPStatus
 from urllib.parse import urlencode
 
@@ -50,13 +52,21 @@ def parse_host(text: str) -> tuple[str, int]:
 class VolumioRestClient:
     """Volumio の REST API による読み取り専用のクライアント。"""
 
-    def __init__(self, host: str, timeout: float = 10.0, page_size: int = 500) -> None:
+    def __init__(
+        self,
+        host: str,
+        timeout: float = 10.0,
+        page_size: int = 500,
+        should_stop: Callable[[], bool] | None = None,
+    ) -> None:
         """接続先を設定する。通信はメソッドを呼んだときに行う。
 
         Args:
             host: Volumio の接続先（`volumio.local` など）。
             timeout: 1 回のリクエストのタイムアウト（秒）。
             page_size: ライブラリを参照するとき、1 回のリクエストで受け取る項目数。
+            should_stop: 分割取得のリクエストの間に呼び、True を返したら中断する
+                （項目の多いフォルダでも中断できるように）。
 
         Raises:
             ValueError: 接続先の形式が不正な場合。
@@ -64,6 +74,7 @@ class VolumioRestClient:
         self._host, self._port = parse_host(host)
         self._timeout = timeout
         self._page_size = page_size
+        self._should_stop = should_stop
 
     @property
     def kind(self) -> str:
@@ -89,17 +100,21 @@ class VolumioRestClient:
         ライブラリの外を指す項目（Web ラジオなど）は含めない。
 
         Raises:
-            VolumioError: 通信に失敗した場合、または応答の形式が想定と異なる場合。
+            VolumioError: 通信に失敗した場合、応答の形式が想定と異なる場合、または中断した場合。
         """
         items: list[BrowseItem] = []
         offset = 0
         while True:
+            if self._should_stop is not None and self._should_stop():
+                raise VolumioError("cancelled")
+
             query = urlencode({"uri": uri, "limit": self._page_size, "offset": offset})
-            page, total = _parse_browse(self._get_json(f"/api/v1/browse?{query}"))
-            items.extend(page)
+            page = _parse_browse(self._get_json(f"/api/v1/browse?{query}"))
+            items.extend(page.items)
             offset += self._page_size
+            # 終わりの判定には、対象外の項目を除く前の件数を使う。対象外の項目だけの回があっても、続きを取得する。
             # count がない応答は分割取得に対応していないため、1 回で終える
-            if total is None or offset >= total or not page:
+            if page.total is None or offset >= page.total or page.raw_count == 0:
                 return items
 
     def _get_json(self, path: str) -> object:
@@ -125,14 +140,30 @@ class VolumioRestClient:
         return data
 
 
-def _parse_browse(data: object) -> tuple[list[BrowseItem], int | None]:
-    """ライブラリ参照（browse）の応答から項目と総数を取り出す。総数は分割取得に対応した応答だけにある。"""
+@dataclass(frozen=True)
+class _BrowsePage:
+    """ライブラリ参照の 1 回分の応答。
+
+    Attributes:
+        items: 曲とたどれる項目（ライブラリ外の項目を除いたもの）。
+        raw_count: 応答に含まれていた項目数（除く前）。
+        total: 全体の項目数。分割取得に対応した応答だけにある。
+    """
+
+    items: list[BrowseItem]
+    raw_count: int
+    total: int | None
+
+
+def _parse_browse(data: object) -> _BrowsePage:
+    """ライブラリ参照（browse）の応答から項目と件数を取り出す。"""
     navigation = data.get("navigation") if isinstance(data, dict) else None
     lists = navigation.get("lists") if isinstance(navigation, dict) else None
     if not isinstance(lists, list):
         raise VolumioError("unexpected response from browse")
 
     items: list[BrowseItem] = []
+    raw_count = 0
     total: int | None = None
     for entry in lists:
         if not isinstance(entry, dict):
@@ -140,13 +171,14 @@ def _parse_browse(data: object) -> tuple[list[BrowseItem], int | None]:
 
         raw_items = entry.get("items", [])
         if isinstance(raw_items, list):
+            raw_count += len(raw_items)
             items.extend(item for item in (_to_item(raw) for raw in raw_items) if item is not None)
 
         count = entry.get("count")
         if isinstance(count, int):
             total = count if total is None else max(total, count)
 
-    return items, total
+    return _BrowsePage(items, raw_count, total)
 
 
 def _to_item(raw: object) -> BrowseItem | None:

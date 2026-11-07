@@ -125,7 +125,7 @@ def run_volumio_sync(conn: sqlite3.Connection, host: str, control: JobControl) -
         VolumioError: 通信に失敗した場合、または中断した場合。
         ValueError: 接続先の形式が不正な場合。
     """
-    uris = collect_track_uris(VolumioRestClient(host), control=control)
+    uris = collect_track_uris(VolumioRestClient(host, should_stop=control.is_cancelled), control=control)
     with transaction(conn):
         replace_uris(conn, host, uris)
 
