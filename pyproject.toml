@@ -1,0 +1,100 @@
+[project]
+name = "volumio-playlist-studio"
+version = "0.1.0"
+description = "ローカルの音楽を解析し、気分・ジャンル・テンポなどに応じたプレイリストを GUI から作成する"
+readme = "README.md"
+authors = [
+    { name = "Ryuichi Kato", email = "lsyp.tuiovjo.1231@gmail.com" }
+]
+requires-python = ">=3.14"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.13.4,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.170.15",
+    "mypy>=2.4.1",
+    "pytest>=9.2.0",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.17.4",
+]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 120
+
+[tool.ruff.lint]
+select = [
+    "E", "W",  # pycodestyle
+    "F",       # pyflakes
+    "I",       # import の並び順
+    "N",       # 命名規則
+    "UP",      # 新しい構文への書き換え
+    "B",       # バグになりやすい書き方
+    "SIM",     # 冗長な書き方
+    "RUF",     # ruff 独自ルール
+    "BLE",     # except Exception などの広すぎる例外捕捉
+    "S",       # セキュリティ（try-except-pass の禁止を含む）
+    "D",       # docstring
+    "C90",     # 循環的複雑度
+    "PLR",     # 分岐数・引数の数など
+    "PT",      # pytest のスタイル
+    "G",       # logging の書き方
+    "T20",     # print の禁止
+]
+ignore = [
+    # 日本語の全角記号（（）、：など）を誤検出するため
+    "RUF001", "RUF002", "RUF003",
+    # 日本語の docstring は「。」で終わるため、末尾の英語句読点を要求しない
+    "D415",
+    # モジュール・パッケージ・特殊メソッド・__init__ の docstring は必須にしない
+    "D100", "D104", "D105", "D107",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "S101",     # pytest では assert を使う
+    "D",        # テスト関数の docstring は必須にしない
+    "PLR2004",  # テストの期待値は定数化しない
+]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.mypy]
+python_version = "3.14"
+strict = true
+files = ["src", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = [
+    "-ra",
+    "--strict-markers",
+    "--strict-config",
+    # 実通信を行うテストは通常の実行から除外する。実行するときは `-m integration` を指定する
+    "-m", "not integration",
+    "--cov",
+    "--cov-report=term-missing",
+]
+markers = [
+    "integration: 外部サービスと実際に通信するテスト",
+]
+# xfail のテストが成功したら失敗扱いにし、不要になった xfail を残さない
+xfail_strict = true
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+source = ["volumio_playlist_studio"]
+branch = true
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+skip_covered = true
