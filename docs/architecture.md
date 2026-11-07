@@ -29,6 +29,7 @@ src/volumio_playlist_studio/
 ├── playlist.py        選曲エンジン（適合度、制約、曲順、条件不足の説明、編集操作）
 ├── evaluation.py      精度評価の指標、評価データの分割、CSV 出力
 ├── volumio.py         Volumio クライアントのインターフェース、モック、URI 照合、登録処理
+├── volumio_rest.py    Volumio の REST API による読み取り専用のクライアント
 ├── catalog.py         画面・選曲エンジン向けのデータ集約（候補、ダッシュボードの集計）
 ├── workflows.py       画面から呼ぶ一連の処理（スキャン、解析、Jev 判定、見積もり）
 ├── jobs.py            バックグラウンドスレッドでの実行と進捗
@@ -97,6 +98,7 @@ flowchart LR
 | `evaluations` | 人手評価 | 用途（tuning/holdout）、評価時に表示した分類結果の ID と写し（分類結果の行は再分類で上書きされるため）、ジャンル・ムードの正誤と正解、属性の 5 段階評価 |
 | `playlists` / `playlist_tracks` | 保存したプレイリスト | 生成条件（JSON）、seed、使った分類結果の種類、満足度／曲順、適合度、手動追加、不適切フラグ |
 | `volumio_registrations` / `volumio_registration_items` | Volumio 登録履歴 | クライアントの種類、結果（success/partial/failed）、曲ごとの URI と結果 |
+| `volumio_library_uris` | Volumio から取得した曲の URI | 接続先、URI、取得日時（照合のたびに Volumio をたどらないよう保存） |
 | `app_settings` | GUI で変更する設定 | 音楽フォルダ、解析パラメータ、Jev 設定、分類結果の種類（秘密情報は保存しない） |
 
 ## 分類エンジンの拡張（Essentia など）
@@ -119,11 +121,12 @@ flowchart LR
 - [x] Step 3: mutagen・librosa による解析、SQLite 連携、差分スキャン、エラー記録、処理時間の記録
 - [x] Step 4: Jev 連携の実装（HTTP 層をモックしたテストのみ）、精度評価画面
 - [x] Step 5（一部）: Volumio クライアントのインターフェース、モック、URI 照合、登録処理と履歴
+- [x] Volumio の REST API による読み取り（プレイリスト一覧、曲の一覧の取得と照合）
 
 ### 未完了
 
 - [ ] Jev を実 API で少数の曲（5〜10 曲）に実行し、応答と判定結果を確認する
-- [ ] Volumio 実機クライアントの方式を決めて実装する（[volumio.md](volumio.md) の確認事項）
+- [ ] Volumio へのプレイリスト登録（WebSocket）の方式を決めて実装する。Volumio 4 へのアップデート後に確認する（[volumio.md](volumio.md)）
 - [ ] 実機で URI の対応、プレイリスト作成、曲の追加、再生を確認する
 - [ ] 30〜50 曲で人手評価を行い、ルールベースと Jev を比較する（Step 6）
 - [ ] 評価結果（調整用データのみ）に基づき、ルールの正規化範囲や Jev の閾値を調整する

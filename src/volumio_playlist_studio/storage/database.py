@@ -170,6 +170,17 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         # 上書きされるため、何を見て評価したかを評価データ側に残す
         "ALTER TABLE evaluations ADD COLUMN classification_snapshot_json TEXT",
     ),
+    (
+        # Volumio の REST API で取得した曲の URI。照合のたびに Volumio のライブラリをたどらずに済むよう保存する
+        """
+        CREATE TABLE volumio_library_uris (
+            host TEXT NOT NULL,
+            uri TEXT NOT NULL,
+            collected_at TEXT NOT NULL,
+            PRIMARY KEY (host, uri)
+        )
+        """,
+    ),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

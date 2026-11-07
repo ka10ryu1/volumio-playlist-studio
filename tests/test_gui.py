@@ -9,6 +9,7 @@ from pathlib import Path
 
 import pytest
 from streamlit.testing.v1 import AppTest
+from test_volumio_rest import FakeVolumio
 
 from volumio_playlist_studio.jobs import BackgroundJob
 from volumio_playlist_studio.models import ClassificationSource, Genre
@@ -85,6 +86,12 @@ def click(at: AppTest, label: str) -> AppTest:
     next(b for b in at.button if b.label == label).click().run()
     assert not at.exception, [e.value for e in at.exception]
     return at
+
+
+def submit(at: AppTest, form_id: str) -> None:
+    """フォームの送信ボタンを押す。同じ「保存」ボタンが複数あるため、フォームの ID で区別する。"""
+    next(b for b in at.button if b.form_id == form_id).click().run()
+    assert not at.exception, [e.value for e in at.exception]
 
 
 def wait_for_jobs(at: AppTest) -> None:
@@ -272,19 +279,19 @@ def test_settings_view_saves_values(demo: sqlite3.Connection) -> None:
     assert any("API キー: 未設定" in w.value for w in at.warning)
 
     next(t for t in at.text_input if t.label == "ホスト名または IP アドレス").input("volumio.local")
-    at.button[2].click().run()  # Volumio 接続先の保存
+    submit(at, "volumio-host")  # Volumio 接続先の保存
     assert settings_store.get_str(demo, settings_store.VOLUMIO_HOST_KEY) == "volumio.local"
 
     next(n for n in at.number_input if n.label == "1 回の実行で判定する曲数の上限").set_value(5)
-    at.button[3].click().run()
+    submit(at, "jev-settings")
     assert settings_store.get_jev_settings(demo).max_tracks_per_run == 5
 
     next(n for n in at.number_input if n.label == "解析する区間の数").set_value(4)
-    at.button[4].click().run()
+    submit(at, "analysis-params")
     assert settings_store.get_analysis_params(demo).segment_count == 4
 
     next(r for r in at.radio if r.label == "選曲に使う分類結果").set_value(ClassificationSource.RULES)
-    at.button[5].click().run()
+    submit(at, "engine")
     assert settings_store.get_str(demo, settings_store.CLASSIFICATION_SOURCE_KEY) == "rules"
     assert not at.exception
 
@@ -394,3 +401,53 @@ def test_reopened_evaluation_keeps_saved_labels(demo: sqlite3.Connection) -> Non
     )
     assert updated.note == "メモだけ追記"
     assert updated.classification_snapshot is not None
+
+
+@pytest.fixture
+def fake_volumio() -> Iterator[FakeVolumio]:
+    fake = FakeVolumio()
+    yield fake
+    fake.close()
+
+
+def test_settings_volumio_connection_test(
+    demo: sqlite3.Connection, fake_volumio: FakeVolumio, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    at = run_view("settings_page")
+    next(t for t in at.text_input if t.label == "ホスト名または IP アドレス").input("http://volumio.local/api")
+    submit(at, "volumio-host")
+    assert any("形式が正しくありません" in e.value for e in at.error)
+    assert settings_store.get_str(demo, settings_store.VOLUMIO_HOST_KEY) is None
+
+    next(t for t in at.text_input if t.label == "ホスト名または IP アドレス").input(fake_volumio.host)
+    submit(at, "volumio-host")
+    click(at, "接続テスト（プレイリスト一覧を読み取る）")
+    assert any("既存のプレイリスト 2 件" in s.value for s in at.success)
+
+    fake_volumio.close()
+    click(at, "接続テスト（プレイリスト一覧を読み取る）")
+    assert any("接続できませんでした" in e.value for e in at.error)
+
+
+def test_volumio_panel_previews_against_real_library(demo: sqlite3.Connection, fake_volumio: FakeVolumio) -> None:
+    with transaction(demo):
+        settings_store.set_value(demo, settings_store.VOLUMIO_HOST_KEY, fake_volumio.host)
+
+    at = run_view("playlist_page")
+    click(at, "プレイリストを生成")
+    click(at, "プレイリストを保存")
+    assert next(r for r in at.radio if r.label == "照合先").value == "Volumio 実機（読み取りのみ）"
+    assert any("まだ曲の一覧を取得していません" in c.value for c in at.caption)
+    # 実機への登録は未実装のため、登録ボタンは表示しない
+    assert not any(b.label == "Volumio に登録" for b in at.button)
+
+    click(at, "Volumio から曲の一覧を取得")
+    wait_for_jobs(at)
+    at.run()
+    assert any("6 曲の情報を取得しました" in s.value for s in at.success)
+    # サンプルデータの曲は模擬した Volumio のライブラリにないため、すべて「対応なし」になる
+    assert any("Volumio 上の URI と一意に対応しない" in w.value for w in at.warning)
+    assert {method for method, _ in fake_volumio.requests} == {"GET"}
+
+    next(r for r in at.radio if r.label == "照合先").set_value("モック（模擬）").run()
+    assert any(b.label == "Volumio に登録" for b in at.button)
