@@ -38,6 +38,7 @@
 - 開発は WSL、実際の利用は Windows に直接クローンして `setup.cmd` → `start.cmd`（ダブルクリック）で起動する想定。Windows 固有の処理（パス、ランチャー）を変えるときは両方の環境を意識する
 - `.env` とデータの保存先はプロジェクト直下を基準にする（`config.PROJECT_ROOT`）。ダブルクリック起動ではカレントフォルダに依存できないため
 - 起動処理は `launcher.py` にまとめ、`scripts/windows/*.ps1` からはそれを呼ぶだけにする。`.ps1` は Windows PowerShell 5.1 で日本語を読めるよう BOM 付き UTF-8・CRLF で保存する
+- CI の `windows-setup-and-start` ジョブが、`tests/windows/test_setup_and_start.ps1`（セットアップ → 起動 → ヘルスチェック → 停止）を Windows PowerShell 5.1 で実行する。Windows 用のスクリプトや起動処理を変えたら、手元の Windows でもこのスクリプトを実行して確認する
 
 ```bash
 uv run python -m volumio_playlist_studio.launcher   # WSL・Linux

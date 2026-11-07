@@ -203,3 +203,17 @@ def test_start_runs_launcher_with_synced_venv() -> None:
     assert 'Join-Path $projectRoot "$venvName\\Scripts\\python.exe"' in start
     assert "-m volumio_playlist_studio.launcher" in start
     assert "uv run" not in start
+
+
+def test_windows_ci_runs_setup_and_start_check() -> None:
+    script = ROOT / "tests" / "windows" / "test_setup_and_start.ps1"
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    # Windows PowerShell 5.1 で日本語を正しく読めるよう、BOM 付き UTF-8 で保存する
+    assert script.read_bytes().startswith(b"\xef\xbb\xbf")
+    implementation = script.read_text(encoding="utf-8-sig")
+    assert "scripts\\windows\\setup.ps1" in implementation
+    assert '-m", "volumio_playlist_studio.launcher"' in implementation
+    assert "runs-on: windows-latest" in workflow
+    assert "shell: powershell" in workflow
+    assert ".\\tests\\windows\\test_setup_and_start.ps1" in workflow
