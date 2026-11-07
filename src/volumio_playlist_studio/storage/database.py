@@ -165,6 +165,11 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         )
         """,
     ),
+    (
+        # 評価時に表示していた分類結果の写し。classifications の行は同じエンジン・バージョンで再分類すると
+        # 上書きされるため、何を見て評価したかを評価データ側に残す
+        "ALTER TABLE evaluations ADD COLUMN classification_snapshot_json TEXT",
+    ),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

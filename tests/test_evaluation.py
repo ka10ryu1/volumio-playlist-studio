@@ -11,6 +11,7 @@ from volumio_playlist_studio.evaluation import (
     assign_splits,
     compute_engine_metrics,
     export_csv,
+    initial_verdict,
     playlist_feedback_metrics,
     rating_to_unit,
     select_evaluation_sample,
@@ -138,6 +139,7 @@ def test_export_csv(make_track: TrackFactory, make_classification: Classificatio
         track.id: EvaluationLabel(
             track.id, Split.HOLDOUT, genre_verdict=Verdict.CORRECT, genre_label=Genre.JAZZ,
             ratings={Attribute.ENERGY: 2}, note="+メモ",
+            classification_snapshot=make_classification(genre=Genre.FOLK_ACOUSTIC, mood=Mood.RELAX),
         )
     }  # fmt: skip
     classifications = {"rules": {track.id: make_classification(genre=Genre.JAZZ, energy=0.3)}, "jev": {}}
@@ -153,6 +155,40 @@ def test_export_csv(make_track: TrackFactory, make_classification: Classificatio
     assert row["rules_genre"] == "jazz"
     assert row["rules_energy"] == "0.3"
     assert row["jev_genre"] == ""
+    # 評価時に表示していた結果と、現在の分類結果は別に出力する
+    assert (row["evaluated_engine"], row["evaluated_genre"], row["evaluated_mood"]) == (
+        "rules",
+        "folk_acoustic",
+        "relax",
+    )
     assert row["genre_verdict"] == "correct"
     assert row["rating_energy"] == "2"
     assert row["rating_relaxation"] == ""
+
+
+@pytest.mark.parametrize(
+    ("stored_verdict", "stored_label", "predicted", "expected"),
+    [
+        # 未評価なら何も選ばない（うっかり「正しい」のまま保存しないように）
+        (None, None, Genre.JAZZ, (None, None)),
+        (Verdict.CORRECT, Genre.JAZZ, Genre.JAZZ, (Verdict.CORRECT, None)),
+        (Verdict.INCORRECT, Genre.ROCK, Genre.JAZZ, (Verdict.INCORRECT, Genre.ROCK)),
+        (Verdict.PENDING, None, Genre.JAZZ, (Verdict.PENDING, None)),
+        # 「正しい」と評価した後に判定が変わった場合は、保存済みの正解を残すため「誤り」として開く
+        (Verdict.CORRECT, Genre.JAZZ, Genre.POP, (Verdict.INCORRECT, Genre.JAZZ)),
+        # 「誤り」と評価した後に判定が正解と同じになった場合は「正しい」として開く
+        (Verdict.INCORRECT, Genre.ROCK, Genre.ROCK, (Verdict.CORRECT, None)),
+        (Verdict.INCORRECT, Genre.ROCK, None, (Verdict.INCORRECT, Genre.ROCK)),
+    ],
+)
+def test_initial_verdict(
+    stored_verdict: Verdict | None,
+    stored_label: Genre | None,
+    predicted: Genre | None,
+    expected: tuple[Verdict | None, Genre | None],
+) -> None:
+    assert initial_verdict(stored_verdict, stored_label, predicted) == expected
+
+
+def test_initial_verdict_for_mood() -> None:
+    assert initial_verdict(Verdict.INCORRECT, Mood.FOCUS, Mood.RELAX) == (Verdict.INCORRECT, Mood.FOCUS)

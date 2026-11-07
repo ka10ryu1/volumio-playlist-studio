@@ -41,10 +41,17 @@ def run_scan(conn: sqlite3.Connection, root: Path, control: JobControl) -> str:
     """音楽フォルダをスキャンし、ルールベース分類を更新する。"""
     summary = scan_library(conn, root, control)
     classify_with_rules(conn, root.as_posix())
-    return (
+    message = (
         f"追加 {summary.added} 曲、更新 {summary.updated} 曲、変更なし {summary.unchanged} 曲、"
         f"見つからなくなった曲 {summary.missing} 曲、エラー {summary.errors} 件（{summary.elapsed_sec:.1f} 秒）"
     )
+    if summary.unreadable_dirs:
+        message += (
+            f" 読めないフォルダが {summary.unreadable_dirs} 件あったため、見つからなくなった曲の判定は行っていません。"
+            "共有フォルダの接続と権限を確認して、もう一度スキャンしてください。"
+        )
+
+    return message
 
 
 def run_analysis(conn: sqlite3.Connection, root: Path, control: JobControl) -> str:

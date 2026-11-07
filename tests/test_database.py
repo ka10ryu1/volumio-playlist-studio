@@ -93,3 +93,30 @@ def test_failed_migration_keeps_existing_data(tmp_path: Path, monkeypatch: pytes
     tables = {row[0] for row in check.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
     assert "half_done" not in tables
     check.close()
+
+
+def test_version_1_database_is_migrated_keeping_evaluations(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "db.sqlite3"
+    # 評価時の分類結果の写しの列を追加する前のバージョン（1）の DB を作る
+    with monkeypatch.context() as patched:
+        patched.setattr(database, "MIGRATIONS", database.MIGRATIONS[:1])
+        patched.setattr(database, "SCHEMA_VERSION", 1)
+        old = connect(path)
+        with transaction(old):
+            old.execute(
+                "INSERT INTO tracks (library_root, rel_path, file_size, mtime_ns, first_seen_at, updated_at) "
+                "VALUES ('/m', 'a.flac', 1, 0, 'now', 'now')"
+            )
+            old.execute(
+                "INSERT INTO evaluations (track_id, split, genre_label, added_at) VALUES (1, 'holdout', 'jazz', 'now')"
+            )
+
+        old.close()
+
+    upgraded = connect(path)
+
+    assert current_version(upgraded) == SCHEMA_VERSION
+    row = upgraded.execute("SELECT genre_label, classification_snapshot_json FROM evaluations").fetchone()
+    assert tuple(row) == ("jazz", None)
+    upgraded.close()
+    assert (tmp_path / "db.sqlite3.bak-v1").exists()

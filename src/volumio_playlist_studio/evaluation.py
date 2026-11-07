@@ -110,6 +110,35 @@ def select_evaluation_sample(
     return assign_splits(picked, seed, defaults.tuning_ratio)
 
 
+def initial_verdict[T: (Genre, Mood)](
+    stored_verdict: Verdict | None, stored_label: T | None, predicted: T | None
+) -> tuple[Verdict | None, T | None]:
+    """保存済みの評価から、評価の入力欄の初期値（判定の正誤, 誤りの場合の正しい値）を決める。
+
+    評価した後に分類結果が変わっていることがあるため、保存済みの正解と現在の判定を比べて決める。
+    これにより、メモだけを直して保存しても人手の正解が上書きされない。
+
+    Args:
+        stored_verdict: 保存済みの判定の正誤。未評価なら None。
+        stored_label: 保存済みの正解。
+        predicted: 現在の判定。
+
+    Returns:
+        正解が現在の判定と同じなら（正しい, None）、違えば（誤り, 保存済みの正解）、判定保留なら（判定保留, None）。
+        未評価なら（None, None）とし、うっかり「正しい」のまま保存されるのを防ぐ。
+    """
+    if stored_verdict is None:
+        return None, None
+
+    if stored_verdict == Verdict.PENDING or stored_label is None:
+        return stored_verdict, None
+
+    if stored_label == predicted:
+        return Verdict.CORRECT, None
+
+    return Verdict.INCORRECT, stored_label
+
+
 def rating_to_unit(rating: int) -> float:
     """5 段階の人手評価を 0〜1 に換算する。"""
     return (rating - RATING_MIN) / (RATING_MAX - RATING_MIN)
@@ -239,6 +268,8 @@ def export_csv(
         header += [f"{engine}_version", f"{engine}_genre", f"{engine}_mood"]
         header += [f"{engine}_{a.value}" for a in attributes]
 
+    # 評価時に表示していた分類結果（現在の分類結果とは異なる場合がある）
+    header += ["evaluated_engine", "evaluated_engine_version", "evaluated_genre", "evaluated_mood"]
     header += ["genre_verdict", "genre_label", "mood_verdict", "mood_label"]
     header += [f"rating_{a.value}" for a in attributes]
     header += ["note", "evaluated_at"]
@@ -264,6 +295,12 @@ def export_csv(
 
             row += [c.engine_version, c.genre, c.mood]
             row += [c.attribute_value(a) for a in attributes]
+
+        shown = label.classification_snapshot
+        if shown is None:
+            row += [None] * 4
+        else:
+            row += [shown.engine, shown.engine_version, shown.genre, shown.mood]
 
         row += [label.genre_verdict, label.genre_label, label.mood_verdict, label.mood_label]
         row += [label.ratings.get(a) for a in attributes]

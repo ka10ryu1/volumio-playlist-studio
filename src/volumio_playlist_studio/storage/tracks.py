@@ -17,6 +17,8 @@ class ScanSummary:
     missing: int
     errors: int
     elapsed_sec: float
+    # 読めなかったフォルダの数。1 つでもあれば、見つからなくなった曲の判定は行っていない
+    unreadable_dirs: int = 0
 
 
 @dataclass(frozen=True)

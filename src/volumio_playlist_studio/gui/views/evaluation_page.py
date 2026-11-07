@@ -9,6 +9,7 @@ from volumio_playlist_studio.evaluation import (
     EngineMetrics,
     compute_engine_metrics,
     export_csv,
+    initial_verdict,
     playlist_feedback_metrics,
     select_evaluation_sample,
 )
@@ -117,17 +118,41 @@ def _labeling_section(ctx: PageContext, tracks: dict[int, Track], labels: dict[i
 def _label_form(ctx: PageContext, label: EvaluationLabel, stored: StoredClassification | None) -> None:
     predicted_genre = None if stored is None else stored.result.genre
     predicted_mood = None if stored is None else stored.result.mood
+    # 評価済みの曲を開き直したときは、保存済みの評価を初期値にする
+    genre_initial, genre_correction = initial_verdict(label.genre_verdict, label.genre_label, predicted_genre)
+    mood_initial, mood_correction = initial_verdict(label.mood_verdict, label.mood_label, predicted_mood)
+    moods: list[Mood] = list(_MOODS)
+    genres = list(Genre)
+    verdicts = list(Verdict)
     with st.form(f"label-{label.track_id}"):
         st.markdown(f"判定ジャンル: **{genre_label(predicted_genre)}**")
         genre_verdict = st.radio(
-            "ジャンルの判定は", list(Verdict), format_func=_VERDICT_LABELS.__getitem__, horizontal=True
+            "ジャンルの判定は",
+            verdicts,
+            index=_index_or_none(verdicts, genre_initial),
+            format_func=_VERDICT_LABELS.__getitem__,
+            horizontal=True,
         )
-        corrected_genre = st.selectbox("誤りの場合、正しいジャンル", list(Genre), format_func=genre_label, index=None)
+        corrected_genre = st.selectbox(
+            "誤りの場合、正しいジャンル",
+            genres,
+            index=_index_or_none(genres, genre_correction),
+            format_func=genre_label,
+        )
         st.markdown(f"判定ムード: **{mood_label(predicted_mood)}**")
         mood_verdict = st.radio(
-            "ムードの判定は", list(Verdict), format_func=_VERDICT_LABELS.__getitem__, horizontal=True
+            "ムードの判定は",
+            verdicts,
+            index=_index_or_none(verdicts, mood_initial),
+            format_func=_VERDICT_LABELS.__getitem__,
+            horizontal=True,
         )
-        corrected_mood = st.selectbox("誤りの場合、正しいムード", _MOODS, format_func=mood_label, index=None)
+        corrected_mood = st.selectbox(
+            "誤りの場合、正しいムード",
+            moods,
+            index=_index_or_none(moods, mood_correction),
+            format_func=mood_label,
+        )
 
         st.markdown("属性の評価（評価しない属性は「-」のまま）")
         ratings: dict[Attribute, int] = {}
@@ -163,6 +188,7 @@ def _label_form(ctx: PageContext, label: EvaluationLabel, stored: StoredClassifi
                 track_id=label.track_id,
                 split=label.split,
                 classification_id=None if stored is None else stored.id,
+                classification_snapshot=None if stored is None else stored.result,
                 genre_verdict=genre_verdict,
                 genre_label=genre_value if isinstance(genre_value, Genre) else None,
                 mood_verdict=mood_verdict,
@@ -174,6 +200,10 @@ def _label_form(ctx: PageContext, label: EvaluationLabel, stored: StoredClassifi
 
     st.success("評価を保存しました。")
     st.rerun()
+
+
+def _index_or_none[T](options: list[T], value: T | None) -> int | None:
+    return None if value is None else options.index(value)
 
 
 def _resolve_label[T: (Genre, Mood)](verdict: Verdict, predicted: T | None, corrected: T | None) -> T | bool | None:

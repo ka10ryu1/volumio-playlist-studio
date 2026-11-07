@@ -245,6 +245,7 @@ def test_evaluation_rejects_inconsistent_input(demo: sqlite3.Connection) -> None
     click(at, "無作為に選んで追加")
     # 「誤り」なのに正しいジャンルを選ばない
     next(r for r in at.radio if r.label == "ジャンルの判定は").set_value(Verdict.INCORRECT)
+    next(r for r in at.radio if r.label == "ムードの判定は").set_value(Verdict.PENDING)
 
     click(at, "評価を保存")
 
@@ -353,3 +354,43 @@ def test_app_in_lan_mode_requires_pin_before_any_page(
     assert not at.exception
     assert [t.value for t in at.title] == ["PIN の入力"]
     assert not at.metric
+
+
+def test_evaluation_requires_explicit_verdicts(demo: sqlite3.Connection) -> None:
+    at = run_view("evaluation_page")
+    click(at, "無作為に選んで追加")
+
+    # 未評価の曲では判定を選んでいないため、保存できない
+    assert next(r for r in at.radio if r.label == "ジャンルの判定は").value is None
+    click(at, "評価を保存")
+
+    assert any("判定を選んでください" in e.value for e in at.error)
+
+
+def test_reopened_evaluation_keeps_saved_labels(demo: sqlite3.Connection) -> None:
+    at = run_view("evaluation_page")
+    click(at, "無作為に選んで追加")
+    next(r for r in at.radio if r.label == "ジャンルの判定は").set_value(Verdict.INCORRECT)
+    next(s for s in at.selectbox if s.label == "誤りの場合、正しいジャンル").set_value(Genre.WORLD)
+    next(r for r in at.radio if r.label == "ムードの判定は").set_value(Verdict.PENDING)
+    click(at, "評価を保存")
+    [(track_id, saved)] = [(k, v) for k, v in load_labels(demo).items() if v.is_evaluated]
+
+    # 評価済みの曲を開き直すと、保存済みの評価が入力欄に入っている
+    next(c for c in at.checkbox if c.label == "未評価の曲だけ表示").uncheck().run()
+    next(s for s in at.selectbox if s.label == "曲").set_value(track_id).run()
+    assert next(r for r in at.radio if r.label == "ジャンルの判定は").value == Verdict.INCORRECT
+    assert next(s for s in at.selectbox if s.label == "誤りの場合、正しいジャンル").value == Genre.WORLD
+    assert next(r for r in at.radio if r.label == "ムードの判定は").value == Verdict.PENDING
+
+    # メモだけを変えて保存しても、人手の正解は変わらない
+    next(t for t in at.text_input if t.label == "メモ").input("メモだけ追記")
+    click(at, "評価を保存")
+    updated = load_labels(demo)[track_id]
+    assert (updated.genre_verdict, updated.genre_label, updated.mood_verdict) == (
+        saved.genre_verdict,
+        saved.genre_label,
+        saved.mood_verdict,
+    )
+    assert updated.note == "メモだけ追記"
+    assert updated.classification_snapshot is not None

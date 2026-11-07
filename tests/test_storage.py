@@ -249,3 +249,31 @@ def test_rating_outside_scale_is_rejected(db: sqlite3.Connection, rating: int) -
 
     with pytest.raises(ValueError, match="rating"):
         save_label(db, EvaluationLabel(track_id, Split.TUNING, ratings={Attribute.ENERGY: rating}))
+
+
+def test_evaluation_keeps_snapshot_of_shown_classification(
+    db: sqlite3.Connection, make_classification: ClassificationFactory
+) -> None:
+    track_id = _add(db, "a.flac", genre="Jazz")
+    tag_only = make_classification(genre=Genre.JAZZ, energy=None)
+    classification_id = save_classification(db, track_id, tag_only)
+    add_to_evaluation_set(db, {track_id: Split.HOLDOUT})
+    save_label(
+        db,
+        EvaluationLabel(
+            track_id,
+            Split.HOLDOUT,
+            classification_id=classification_id,
+            classification_snapshot=tag_only,
+            genre_verdict=Verdict.CORRECT,
+            genre_label=Genre.JAZZ,
+        ),
+    )
+
+    # 音響解析の後に、同じエンジン・バージョンで分類し直すと分類結果の行は上書きされる
+    reanalyzed = make_classification(genre=Genre.ROCK, energy=0.9)
+    assert save_classification(db, track_id, reanalyzed) == classification_id
+
+    label = load_labels(db)[track_id]
+    assert label.classification_snapshot == tag_only
+    assert load_classifications(db, "rules")[track_id].result == reanalyzed

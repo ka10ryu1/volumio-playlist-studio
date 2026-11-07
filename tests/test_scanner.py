@@ -11,6 +11,7 @@ from volumio_playlist_studio.jobs import JobControl
 from volumio_playlist_studio.scanner import find_audio_files, scan_library
 from volumio_playlist_studio.storage.analysis import list_errors
 from volumio_playlist_studio.storage.tracks import duplicate_groups, last_scan_at, list_tracks
+from volumio_playlist_studio.workflows import run_scan
 
 
 @pytest.fixture
@@ -33,7 +34,8 @@ def test_find_audio_files_ignores_hidden_unsupported_and_nas_folders(library: Pa
     shutil.copy(library / "Artist B" / "song.wav", library / ".hidden" / "x.wav")
     shutil.copy(library / "Artist B" / "song.wav", library / "Artist B" / "UPPER.WAV")
 
-    names = [p.relative_to(library).as_posix() for p in find_audio_files(library)]
+    listing = find_audio_files(library)
+    names = [p.relative_to(library).as_posix() for p in listing.files]
 
     assert names == [
         "Artist B/UPPER.WAV",
@@ -41,6 +43,7 @@ def test_find_audio_files_ignores_hidden_unsupported_and_nas_folders(library: Pa
         "アーティストA/アルバム/01 朝の曲.flac",
         "アーティストA/アルバム/02 夜の曲.flac",
     ]
+    assert listing.unreadable_dirs == []
 
 
 def test_find_audio_files_rejects_non_directory(tmp_path: Path) -> None:
@@ -174,3 +177,47 @@ def test_scan_does_not_modify_music_files(db: sqlite3.Connection, library: Path)
 
     after = {p: (p.stat().st_mtime_ns, p.read_bytes()) for p in library.rglob("*") if p.is_file()}
     assert after == before
+
+
+def _make_unreadable(path: Path) -> None:
+    path.chmod(0)
+    if os.access(path, os.R_OK):  # root 権限では読めてしまうため検証できない
+        path.chmod(0o755)
+        pytest.skip("cannot make directory unreadable when running as root")
+
+
+def test_unreadable_directory_does_not_mark_its_tracks_missing(db: sqlite3.Connection, library: Path) -> None:
+    scan_library(db, library)
+    folder = library / "アーティストA"
+    _make_unreadable(folder)
+
+    try:
+        summary = scan_library(db, library)
+        message = run_scan(db, library, JobControl())
+    finally:
+        folder.chmod(0o755)
+
+    # 一時的に読めないだけかもしれないため、配下の曲を消失扱いにしない
+    assert summary.missing == 0
+    assert summary.unreadable_dirs == 1
+    assert summary.errors == 1
+    assert len(list_tracks(db, library.as_posix())) == 3
+    errors = [e for e in list_errors(db, library.as_posix()) if e.error_type == "DirectoryReadError"]
+    assert errors
+    assert errors[0].message == "cannot read directory: アーティストA"
+    assert str(library) not in errors[0].message
+    assert "判定は行っていません" in message
+
+
+def test_unreadable_root_does_not_mark_tracks_missing(db: sqlite3.Connection, library: Path) -> None:
+    scan_library(db, library)
+    _make_unreadable(library)
+
+    try:
+        summary = scan_library(db, library)
+    finally:
+        library.chmod(0o755)
+
+    assert summary.missing == 0
+    assert summary.unreadable_dirs == 1
+    assert len(list_tracks(db, library.as_posix())) == 3

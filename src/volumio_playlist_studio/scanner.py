@@ -36,11 +36,25 @@ class _Counters:
     seen: set[str] = field(default_factory=set)
 
 
-def find_audio_files(root: Path) -> list[Path]:
-    """対応する拡張子の楽曲ファイルを再帰的に探し、パス順に返す。
+@dataclass(frozen=True)
+class FileListing:
+    """フォルダを探した結果。
+
+    Attributes:
+        files: 見つかった楽曲ファイル（パス順）。
+        unreadable_dirs: 読めなかったフォルダの、ライブラリのルートからの相対パス。
+    """
+
+    files: list[Path]
+    unreadable_dirs: list[str]
+
+
+def find_audio_files(root: Path) -> FileListing:
+    """対応する拡張子の楽曲ファイルを再帰的に探す。
 
     隠しファイル（macOS が SMB 共有に作る `._` ファイルなど）と NAS の管理用フォルダは除外する。
     シンボリックリンクのフォルダはたどらない（ループとライブラリ外への到達を防ぐ）。
+    権限の変更や NAS の一時的な障害で読めないフォルダは、飛ばさずに記録する（os.walk は既定で黙って飛ばすため）。
 
     Raises:
         NotADirectoryError: root がフォルダでない場合。
@@ -48,8 +62,13 @@ def find_audio_files(root: Path) -> list[Path]:
     if not root.is_dir():
         raise NotADirectoryError("library root is not a directory")
 
+    unreadable: list[str] = []
+
+    def on_error(error: OSError) -> None:
+        unreadable.append(_relative_or_root(error.filename, root))
+
     found: list[Path] = []
-    for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+    for dirpath, dirnames, filenames in os.walk(root, onerror=on_error, followlinks=False):
         dirnames[:] = sorted(d for d in dirnames if not d.startswith(".") and d not in _IGNORED_DIRS)
         found.extend(
             Path(dirpath, name)
@@ -57,7 +76,18 @@ def find_audio_files(root: Path) -> list[Path]:
             if not name.startswith(".") and Path(name).suffix.lower() in SUPPORTED_EXTENSIONS
         )
 
-    return found
+    return FileListing(found, sorted(unreadable))
+
+
+def _relative_or_root(filename: object, root: Path) -> str:
+    """エラーになったフォルダのパスを、ログに出せる相対パスにする。求められなければ "." とする。"""
+    if not isinstance(filename, str):
+        return "."
+
+    try:
+        return to_library_relative_path(Path(filename), root)
+    except ValueError:
+        return "."
 
 
 def scan_library(
@@ -72,7 +102,7 @@ def scan_library(
     Args:
         conn: DB 接続。
         root: 音楽ライブラリのルート（絶対パス）。
-        control: 進捗通知と中断の受け付け。中断時は消失の判定を行わない。
+        control: 進捗通知と中断の受け付け。中断時は消失の判定を行わない。読めないフォルダがあった場合も同様。
 
     Returns:
         スキャン結果の集計。
@@ -84,10 +114,13 @@ def scan_library(
     started = time.monotonic()
     started_at = utc_now()
     library_root = root.as_posix()
-    files = find_audio_files(root)
+    listing = find_audio_files(root)
+    files = listing.files
     snapshots = track_store.load_snapshots(conn, library_root)
     counters = _Counters()
-    logger.info("scan started: files=%d", len(files))
+    logger.info("scan started: files=%d unreadable_dirs=%d", len(files), len(listing.unreadable_dirs))
+    if listing.unreadable_dirs:
+        _record_unreadable_dirs(conn, listing.unreadable_dirs, counters)
 
     cancelled = False
     for start in range(0, len(files), _COMMIT_INTERVAL):
@@ -101,7 +134,10 @@ def scan_library(
 
         control.report(min(start + _COMMIT_INTERVAL, len(files)), len(files))
 
-    missing_ids = [] if cancelled else _missing_track_ids(snapshots, counters.seen)
+    # 中断した場合や、読めないフォルダがあった場合は、見つからなかった曲が本当に消えたのか分からないため、
+    # 消失の判定を行わない（一時的な障害で曲が選曲の候補から外れるのを防ぐ）
+    complete = not cancelled and not listing.unreadable_dirs
+    missing_ids = _missing_track_ids(snapshots, counters.seen) if complete else []
     summary = track_store.ScanSummary(
         added=counters.added,
         updated=counters.updated,
@@ -109,19 +145,20 @@ def scan_library(
         missing=len(missing_ids),
         errors=counters.errors,
         elapsed_sec=time.monotonic() - started,
+        unreadable_dirs=len(listing.unreadable_dirs),
     )
     with transaction(conn):
         track_store.mark_missing(conn, missing_ids)
         track_store.record_scan(conn, library_root, started_at, summary)
 
     logger.info(
-        "scan finished: added=%d updated=%d unchanged=%d missing=%d errors=%d cancelled=%s elapsed_sec=%.1f",
+        "scan finished: added=%d updated=%d unchanged=%d missing=%d errors=%d complete=%s elapsed_sec=%.1f",
         summary.added,
         summary.updated,
         summary.unchanged,
         summary.missing,
         summary.errors,
-        cancelled,
+        complete,
         summary.elapsed_sec,
     )
     return summary
@@ -169,6 +206,15 @@ def _scan_file(
         counters.added += 1
     else:
         counters.updated += 1
+
+
+def _record_unreadable_dirs(conn: sqlite3.Connection, rel_dirs: list[str], counters: _Counters) -> None:
+    with transaction(conn):
+        for rel_dir in rel_dirs:
+            counters.errors += 1
+            message = f"cannot read directory: {rel_dir}"
+            record_error(conn, None, ErrorRecord("tags", "DirectoryReadError", message, None))
+            logger.warning("scan directory failed: path=%s", rel_dir)
 
 
 def _missing_track_ids(snapshots: dict[str, track_store.TrackSnapshot], seen: set[str]) -> list[int]:

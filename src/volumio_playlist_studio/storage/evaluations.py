@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from volumio_playlist_studio.config import RATING_MAX, RATING_MIN
-from volumio_playlist_studio.models import Attribute, Genre, Mood
+from volumio_playlist_studio.models import Attribute, ClassificationResult, Genre, Mood
 from volumio_playlist_studio.storage.database import utc_now
 
 
@@ -30,7 +30,9 @@ class EvaluationLabel:
     """1 曲分の人手評価。
 
     Attributes:
-        classification_id: 評価時に画面に表示していた分類結果。どのバージョンの結果を見て評価したかを追跡する。
+        classification_id: 評価時に画面に表示していた分類結果の ID。
+        classification_snapshot: 評価時に画面に表示していた分類結果の写し。分類結果の行は再分類で上書きされうるため、
+            何を見て評価したかはこちらで追跡する。
         genre_label: 人が正しいと判断したジャンル。判断できない場合は None。
         mood_label: 人が正しいと判断したムード。判断できない場合は None。
         ratings: 属性ごとの 5 段階評価。
@@ -39,6 +41,7 @@ class EvaluationLabel:
     track_id: int
     split: Split
     classification_id: int | None = None
+    classification_snapshot: ClassificationResult | None = None
     genre_verdict: Verdict | None = None
     genre_label: Genre | None = None
     mood_verdict: Verdict | None = None
@@ -74,12 +77,15 @@ def save_label(conn: sqlite3.Connection, label: EvaluationLabel) -> None:
 
     cursor = conn.execute(
         """
-        UPDATE evaluations SET classification_id = ?, genre_verdict = ?, genre_label = ?, mood_verdict = ?,
-            mood_label = ?, ratings_json = ?, note = ?, evaluated_at = ?
+        UPDATE evaluations SET classification_id = ?, classification_snapshot_json = ?, genre_verdict = ?,
+            genre_label = ?, mood_verdict = ?, mood_label = ?, ratings_json = ?, note = ?, evaluated_at = ?
         WHERE track_id = ?
         """,
         (
             label.classification_id,
+            None
+            if label.classification_snapshot is None
+            else json.dumps(label.classification_snapshot.to_dict(), ensure_ascii=False),
             _value_or_none(label.genre_verdict),
             _value_or_none(label.genre_label),
             _value_or_none(label.mood_verdict),
@@ -106,6 +112,9 @@ def _row_to_label(row: sqlite3.Row) -> EvaluationLabel:
         track_id=row["track_id"],
         split=Split(row["split"]),
         classification_id=row["classification_id"],
+        classification_snapshot=None
+        if row["classification_snapshot_json"] is None
+        else ClassificationResult.from_dict(json.loads(row["classification_snapshot_json"])),
         genre_verdict=None if row["genre_verdict"] is None else Verdict(row["genre_verdict"]),
         genre_label=None if row["genre_label"] is None else Genre(row["genre_label"]),
         mood_verdict=None if row["mood_verdict"] is None else Verdict(row["mood_verdict"]),
