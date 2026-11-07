@@ -104,7 +104,9 @@ class MockVolumioClient:
                 siblings = library.setdefault(parent, [])
                 if item not in siblings:
                     siblings.append(item)
+
                 parent = child
+
         return cls(library=library)
 
     def list_playlists(self) -> list[str]:
@@ -119,8 +121,10 @@ class MockVolumioClient:
         """空のプレイリストを作成する。"""
         if self.fail_on_create:
             raise VolumioError("mock: failed to create playlist")
+
         if name in self.playlists:
             raise PlaylistExistsError("playlist already exists")
+
         self.playlists[name] = []
 
     def add_to_playlist(self, name: str, uri: str, service: str) -> None:
@@ -128,10 +132,13 @@ class MockVolumioClient:
         self._add_count += 1
         if self.fail_on_add is not None and self._add_count >= self.fail_on_add:
             raise VolumioError("mock: failed to add track")
+
         if name not in self.playlists:
             raise VolumioError("playlist does not exist")
+
         if service != _MPD_SERVICE:
             raise VolumioError("unsupported service")
+
         self.playlists[name].append(uri)
 
 
@@ -152,11 +159,13 @@ def collect_track_uris(
             count += 1
             if count > max_items:
                 raise VolumioError("too many items in Volumio library")
+
             if item.type in _TRACK_TYPES:
                 uris.append(item.uri)
             elif item.type in _FOLDER_TYPES and item.uri not in visited:
                 visited.add(item.uri)
                 queue.append(item.uri)
+
     return uris
 
 
@@ -204,6 +213,7 @@ def match_tracks_to_uris(tracks: list[Track], uris: list[str]) -> list[UriMatch]
             matches.append(UriMatch(track.id, MatchStatus.AMBIGUOUS, None, sorted(candidates)))
         else:
             matches.append(UriMatch(track.id, MatchStatus.UNMATCHED, None, []))
+
     return matches
 
 
@@ -242,8 +252,10 @@ def register_playlist(client: VolumioClient, name: str, entries: list[tuple[int,
     name = name.strip()
     if not name:
         raise ValueError("playlist name must not be empty")
+
     if not any(uri for _, uri in entries):
         raise ValueError("no track has a matched Volumio URI")
+
     if name in client.list_playlists():
         raise PlaylistExistsError("playlist already exists")
 
@@ -261,6 +273,7 @@ def register_playlist(client: VolumioClient, name: str, entries: list[tuple[int,
         status = "failed"
     else:
         status = "partial"
+
     return RegistrationOutcome(status, error, items)
 
 
@@ -275,6 +288,7 @@ def _add_tracks(
             reason = None if uri is not None else "Volumio 上の URI と対応していません"
             items.append(RegistrationItem(position, track_id, uri, "skipped", reason))
             continue
+
         try:
             client.add_to_playlist(name, uri, _MPD_SERVICE)
         except VolumioError as exc:
@@ -282,4 +296,5 @@ def _add_tracks(
             items.append(RegistrationItem(position, track_id, uri, "failed", str(exc)))
         else:
             items.append(RegistrationItem(position, track_id, uri, "added"))
+
     return items, error

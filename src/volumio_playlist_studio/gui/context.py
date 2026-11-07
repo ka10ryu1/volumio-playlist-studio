@@ -55,6 +55,7 @@ def configure_logging(log_path: Path) -> None:
     root = logging.getLogger()
     if any(getattr(h, "baseFilename", None) == str(log_path.resolve()) for h in root.handlers):
         return
+
     log_path.parent.mkdir(parents=True, exist_ok=True)
     handler = RotatingFileHandler(log_path, maxBytes=_LOG_MAX_BYTES, backupCount=_LOG_BACKUPS, encoding="utf-8")
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
@@ -76,6 +77,7 @@ def jobs() -> dict[str, BackgroundJob]:
     """このセッションのバックグラウンド処理。"""
     if _JOBS_KEY not in st.session_state:
         st.session_state[_JOBS_KEY] = {}
+
     result: dict[str, BackgroundJob] = st.session_state[_JOBS_KEY]
     return result
 
@@ -108,6 +110,7 @@ def job_status_panel() -> None:
             st.progress(job.fraction, text=f"{name} を実行中… {job.done}/{job.total or '?'}")
             if st.button("中断", key=f"cancel-{name}"):
                 job.cancel_event.set()
+
             continue
 
         del jobs()[name]
@@ -116,6 +119,7 @@ def job_status_panel() -> None:
         else:
             summary = job.result if isinstance(job.result, str) else ""
             st.session_state["job_message"] = ("success", f"{name} が完了しました。{summary}")
+
         st.rerun()
 
 
@@ -130,6 +134,7 @@ def show_job_message() -> None:
     message = st.session_state.pop("job_message", None)
     if message is None:
         return
+
     kind, text = message
     if kind == "error":
         st.error(text)

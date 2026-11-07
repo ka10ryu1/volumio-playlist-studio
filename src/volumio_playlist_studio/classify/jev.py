@@ -154,6 +154,7 @@ def build_questions() -> dict[str, Choice | Score | Noul]:
     }
     for attribute, (instructions, criteria) in _ATTRIBUTE_QUESTIONS.items():
         questions[attribute.value] = Score(instructions=instructions, criteria=list(criteria))
+
     return questions
 
 
@@ -246,6 +247,7 @@ def create_client(
     """
     if transport is None and not is_typesafe_api_key_set():
         raise JevUnavailableError("TYPESAFE_API_KEY is not set")
+
     if transport is not None:
         # テストでは環境変数に依存しないよう、ダミーのキーと既定の接続先を使う
         return TypeSafeClient(
@@ -256,6 +258,7 @@ def create_client(
             retry=retry,
             base_url=DEFAULT_BASE_URL,
         )
+
     return TypeSafeClient(model=settings.model, timeout=settings.timeout_sec, retry=retry)
 
 

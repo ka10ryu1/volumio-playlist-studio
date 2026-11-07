@@ -103,6 +103,7 @@ def select_evaluation_sample(
     """
     if not defaults.min_sample_size <= size <= defaults.max_sample_size:
         raise ValueError("sample size is out of range")
+
     pool = sorted(t.id for t in tracks if t.id not in already_selected)
     rng = np.random.default_rng(seed)
     picked = sorted(pool[i] for i in rng.choice(len(pool), size=min(size, len(pool)), replace=False))
@@ -121,14 +122,17 @@ def _agreement(pairs: Iterable[tuple[str | None, str | None]]) -> LabelAgreement
     for truth, predicted in pairs:
         if truth is None:
             continue
+
         labeled += 1
         if predicted is None:
             continue
+
         decided += 1
         if truth == predicted:
             correct += 1
         else:
             confusions[(truth, predicted)] += 1
+
     return LabelAgreement(
         labeled=labeled,
         decided=decided,
@@ -140,6 +144,7 @@ def _agreement(pairs: Iterable[tuple[str | None, str | None]]) -> LabelAgreement
 def _truth(verdict: Verdict | None, label: Genre | Mood | None) -> str | None:
     if verdict in {Verdict.CORRECT, Verdict.INCORRECT} and label is not None:
         return label.value
+
     return None
 
 
@@ -205,6 +210,7 @@ def playlist_feedback_metrics(playlists: list[SavedPlaylist]) -> list[PlaylistFe
                 mean_satisfaction=sum(satisfactions) / len(satisfactions),
             )
         )
+
     return result
 
 
@@ -232,6 +238,7 @@ def export_csv(
     for engine in engines:
         header += [f"{engine}_version", f"{engine}_genre", f"{engine}_mood"]
         header += [f"{engine}_{a.value}" for a in attributes]
+
     header += ["genre_verdict", "genre_label", "mood_verdict", "mood_label"]
     header += [f"rating_{a.value}" for a in attributes]
     header += ["note", "evaluated_at"]
@@ -254,10 +261,13 @@ def export_csv(
             if c is None:
                 row += [None] * (3 + len(attributes))
                 continue
+
             row += [c.engine_version, c.genre, c.mood]
             row += [c.attribute_value(a) for a in attributes]
+
         row += [label.genre_verdict, label.genre_label, label.mood_verdict, label.mood_label]
         row += [label.ratings.get(a) for a in attributes]
         row += [label.note, label.evaluated_at]
         writer.writerow([_csv_safe(v) for v in row])
+
     return buffer.getvalue()

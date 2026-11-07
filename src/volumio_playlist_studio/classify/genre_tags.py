@@ -37,7 +37,9 @@ def genre_from_tag(tag: str | None) -> Genre | None:
     """
     if tag is None or not tag.strip():
         return None
+
     for genre, pattern in _GENRE_PATTERNS:
         if pattern.search(tag):
             return genre
+
     return None

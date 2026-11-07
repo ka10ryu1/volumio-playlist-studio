@@ -81,6 +81,7 @@ def plan_segments(total_seconds: float, params: AnalysisParams) -> list[Segment]
     usable = end - start
     if usable < _MIN_SEGMENT_SECONDS:
         return [Segment(0.0, total_seconds)]
+
     if usable <= params.segment_count * params.segment_seconds:
         return [Segment(start, usable)]
 
@@ -137,6 +138,7 @@ def _features_from_chunks(chunks: Iterable[FloatArray], params: AnalysisParams) 
     for chunk in chunks:
         if len(chunk) < _MIN_SEGMENT_SECONDS * params.sample_rate:
             continue
+
         # 無音の区間は、重い特徴量を計算する前に除外する。フレームごとの dB の平均は無音フレームに
         # 引きずられて小さくなるため、区間全体の RMS（線形で平均してから dB に変換）で判定する
         segment_rms = float(np.sqrt(np.mean(np.square(chunk, dtype=np.float64))))
@@ -145,6 +147,7 @@ def _features_from_chunks(chunks: Iterable[FloatArray], params: AnalysisParams) 
 
     if not segments:
         raise FeatureExtractionError("audio is silent or too short to analyze")
+
     return _aggregate(segments)
 
 

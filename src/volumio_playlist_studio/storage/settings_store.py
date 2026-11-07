@@ -19,6 +19,7 @@ def get_value(conn: sqlite3.Connection, key: str) -> object:
     row = conn.execute("SELECT value_json FROM app_settings WHERE key = ?", (key,)).fetchone()
     if row is None:
         return None
+
     value: object = json.loads(row["value_json"])
     return value
 
@@ -69,6 +70,7 @@ def _load_dataclass[T: (AnalysisParams, JevSettings)](conn: sqlite3.Connection, 
     stored = get_value(conn, key)
     if not isinstance(stored, dict):
         return cls()
+
     # 古いバージョンで保存した未知のキーは無視する
     known = {f.name for f in fields(cls)}
     return cls(**{k: v for k, v in stored.items() if k in known})

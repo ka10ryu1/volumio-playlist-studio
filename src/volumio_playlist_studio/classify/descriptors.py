@@ -58,6 +58,7 @@ def bucket(value: float, buckets: _Buckets) -> str:
     for upper, label in buckets:
         if value < upper:
             return label
+
     return buckets[-1][1]
 
 

@@ -89,10 +89,12 @@ def analyze_pending(
         if control.is_cancelled():
             cancelled = True
             break
+
         if _analyze_one(conn, root, track, params, rules):
             analyzed += 1
         else:
             failed += 1
+
         control.report(index + 1, len(targets))
 
     summary = AnalysisRunSummary(
@@ -126,6 +128,7 @@ def _analyze_one(
             analysis_store.record_error(
                 conn, track.id, analysis_store.ErrorRecord("features", type(exc).__name__, message, ANALYSIS_VERSION)
             )
+
         logger.warning("analysis failed: path=%s error=%s", track.rel_path, type(exc).__name__)
         return False
 
@@ -135,6 +138,7 @@ def _analyze_one(
             conn, track, features, analysis_store.FeatureRun(params, ANALYSIS_VERSION, elapsed)
         )
         analysis_store.save_classification(conn, track.id, rules.classify(track, features))
+
     logger.debug("analysis succeeded: path=%s elapsed_sec=%.2f", track.rel_path, elapsed)
     return True
 

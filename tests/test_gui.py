@@ -51,6 +51,7 @@ def demo(app_db: sqlite3.Connection) -> sqlite3.Connection:
     load_demo_library(app_db)
     with transaction(app_db):
         settings_store.set_value(app_db, settings_store.MUSIC_ROOT_KEY, DEMO_LIBRARY_ROOT)
+
     return app_db
 
 
@@ -136,6 +137,7 @@ def test_jev_panel_shows_estimate_before_calling_api(
     scan_library(app_db, folder)
     with transaction(app_db):
         settings_store.set_value(app_db, settings_store.MUSIC_ROOT_KEY, folder.as_posix())
+
     at = run_view("library")
     assert any("TYPESAFE_API_KEY が未設定" in i.value for i in at.info)
 

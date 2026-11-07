@@ -83,6 +83,7 @@ def save_playlist(conn: sqlite3.Connection, draft: PlaylistDraft) -> int:
     name = draft.name.strip()
     if not name:
         raise ValueError("playlist name must not be empty")
+
     if not draft.entries:
         raise ValueError("playlist must contain at least one track")
 
@@ -164,6 +165,7 @@ def set_feedback(
     """
     if satisfaction is not None and not RATING_MIN <= satisfaction <= RATING_MAX:
         raise ValueError("satisfaction must be between 1 and 5")
+
     conn.execute(
         "UPDATE playlists SET satisfaction = ?, updated_at = ? WHERE id = ?", (satisfaction, utc_now(), playlist_id)
     )
@@ -232,4 +234,5 @@ def list_registrations(conn: sqlite3.Connection, playlist_id: int) -> list[Regis
                 ],
             )
         )
+
     return records

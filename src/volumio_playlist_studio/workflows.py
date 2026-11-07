@@ -96,10 +96,12 @@ def run_jev(
             RunLimits(settings.max_tracks_per_run, settings.max_consecutive_failures),
             control,
         )
+
     message = (
         f"判定 {summary.classified} 曲、失敗 {summary.failed} 曲、未判定の残り {summary.remaining} 曲"
         f"（入力 {classifier.input_tokens} / 出力 {classifier.output_tokens} トークン）"
     )
     if summary.stopped_reason is not None:
         message += f" {summary.stopped_reason}"
+
     return message

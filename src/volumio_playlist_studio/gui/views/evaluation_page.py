@@ -53,6 +53,7 @@ def render(ctx: PageContext) -> None:
         _labeling_section(ctx, tracks, labels)
         _metrics_section(ctx, labels)
         _export_section(ctx, tracks, labels)
+
     _playlist_feedback_section(ctx)
 
 
@@ -76,6 +77,7 @@ def _sample_section(ctx: PageContext, tracks: list[Track], labels: dict[int, Eva
             assignments = select_evaluation_sample(tracks, set(labels), size, int(seed), defaults)
             with transaction(ctx.conn):
                 add_to_evaluation_set(ctx.conn, assignments)
+
             st.success(f"{len(assignments)} 曲を評価対象に追加しました。")
             st.rerun()
 
@@ -90,6 +92,7 @@ def _labeling_section(ctx: PageContext, tracks: dict[int, Track], labels: dict[i
     if not ids:
         st.caption("表示する曲がありません。")
         return
+
     track_id = st.selectbox(
         "曲",
         ids,
@@ -107,6 +110,7 @@ def _labeling_section(ctx: PageContext, tracks: dict[int, Track], labels: dict[i
             f"アルバム: {tracks[track_id].album or '（不明）'}　ジャンルタグ: {tracks[track_id].genre or '（なし）'}"
         )
         classification_details(None if stored is None else stored.result)
+
     _label_form(ctx, labels[track_id], stored)
 
 
@@ -135,19 +139,23 @@ def _label_form(ctx: PageContext, label: EvaluationLabel, stored: StoredClassifi
             )
             if isinstance(value, int):
                 ratings[attribute] = value
+
         note = st.text_input("メモ", value=label.note or "")
         submitted = st.form_submit_button("評価を保存", type="primary")
 
     if not submitted:
         return
+
     if genre_verdict is None or mood_verdict is None:
         st.error("ジャンルとムードの判定を選んでください。")
         return
+
     genre_value = _resolve_label(genre_verdict, predicted_genre, corrected_genre)
     mood_value = _resolve_label(mood_verdict, predicted_mood, corrected_mood)
     if genre_value is False or mood_value is False:
         st.error("「正しい」は判定結果がある場合だけ、「誤り」は正しい値を選んだ場合だけ保存できます。")
         return
+
     with transaction(ctx.conn):
         save_label(
             ctx.conn,
@@ -163,6 +171,7 @@ def _label_form(ctx: PageContext, label: EvaluationLabel, stored: StoredClassifi
                 note=note.strip() or None,
             ),
         )
+
     st.success("評価を保存しました。")
     st.rerun()
 
@@ -171,8 +180,10 @@ def _resolve_label[T: (Genre, Mood)](verdict: Verdict, predicted: T | None, corr
     """人手評価から正解の値を決める。入力が矛盾する場合は False を返す。"""
     if verdict == Verdict.CORRECT:
         return predicted if predicted is not None else False
+
     if verdict == Verdict.INCORRECT:
         return corrected if corrected is not None and corrected != predicted else False
+
     return None
 
 
@@ -223,6 +234,7 @@ def _metrics_row(m: EngineMetrics) -> dict[str, object]:
     for attribute in Attribute:
         mae = m.attribute_mae.get(attribute)
         row[f"{ATTRIBUTE_LABELS[attribute]} 誤差"] = "-" if mae is None else f"{mae[0]:.2f} (n={mae[1]})"
+
     return row
 
 
@@ -249,6 +261,7 @@ def _playlist_feedback_section(ctx: PageContext) -> None:
     if not playlists:
         st.caption("保存したプレイリストがありません。")
         return
+
     playlist = st.selectbox("プレイリスト", playlists, format_func=lambda p: f"{p.name}（{p.created_at}）")
     if playlist is None:
         return
@@ -266,6 +279,7 @@ def _playlist_feedback_section(ctx: PageContext) -> None:
         if st.form_submit_button("評価を保存"):
             with transaction(ctx.conn):
                 set_feedback(ctx.conn, playlist.id, satisfaction, set(unsuitable))
+
             st.success("プレイリストの評価を保存しました。")
             st.rerun()
 

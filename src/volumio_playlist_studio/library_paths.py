@@ -86,12 +86,14 @@ def resolve_library_input(text: str, *, wsl: bool) -> Path:
     if drive_match is not None:
         if not wsl:
             raise LibraryPathError("windows path outside wsl", "Windows 形式のパスは WSL 上でのみ指定できます。")
+
         rest = drive_match.group("rest").replace("\\", "/")
         return Path("/mnt", drive_match.group("drive").lower(), *[p for p in rest.split("/") if p])
 
     path = Path(cleaned).expanduser()
     if not path.is_absolute():
         raise LibraryPathError("relative path", "音楽フォルダは絶対パスで指定してください。")
+
     return path
 
 
@@ -112,7 +114,9 @@ def redact_paths(message: str, roots: list[Path]) -> str:
     for root in sorted({str(r) for r in roots}, key=len, reverse=True):
         if root and root != "/":
             result = result.replace(root, "<library>")
+
     home = str(Path.home())
     if home and home != "/":
         result = result.replace(home, "~")
+
     return result

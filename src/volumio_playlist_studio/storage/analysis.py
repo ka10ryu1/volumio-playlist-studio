@@ -192,6 +192,7 @@ def load_classifications(
         rows = conn.execute(
             "SELECT * FROM classifications WHERE engine = ? AND engine_version = ?", (engine, engine_version)
         ).fetchall()
+
     return {
         row["track_id"]: StoredClassification(
             id=row["id"],

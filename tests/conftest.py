@@ -82,6 +82,7 @@ def clicks(seconds: float, bpm: float, sr: int = SAMPLE_RATE) -> np.ndarray:
     step = int(sr * 60 / bpm)
     for start in range(0, len(signal) - len(click), step):
         signal[start : start + len(click)] += click
+
     return signal
 
 
@@ -97,6 +98,7 @@ def write_audio() -> AudioWriter:
             assert audio is not None
             audio.update(tags)
             audio.save()
+
         return path
 
     return _write

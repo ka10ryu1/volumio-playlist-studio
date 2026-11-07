@@ -45,9 +45,11 @@ def effective_classifications(
     rules = {k: v.result for k, v in analysis_store.load_classifications(conn, RULES_ENGINE).items()}
     if source == ClassificationSource.RULES:
         return rules
+
     jev = {k: v.result for k, v in analysis_store.load_classifications(conn, JEV_ENGINE).items()}
     if source == ClassificationSource.JEV:
         return jev
+
     return {**rules, **jev}
 
 
@@ -63,7 +65,9 @@ def load_candidates(conn: sqlite3.Connection, library_root: str, source: Classif
         label = labels.get(track.id)
         if label is not None and label.genre_verdict in {Verdict.CORRECT, Verdict.INCORRECT}:
             genre = label.genre_label
+
         candidates.append(Candidate(track, classification, genre, usage.get(track.id, 0)))
+
     return candidates
 
 

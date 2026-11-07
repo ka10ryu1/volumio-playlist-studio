@@ -53,6 +53,7 @@ def relaxing_library(make_track: TrackFactory, make_classification: Classificati
             calmness=0.8,
         )
         candidates.append(Candidate(track, classification, classification.genre))
+
     return candidates
 
 
@@ -322,8 +323,10 @@ def test_edit_operations(relaxing_library: list[Candidate]) -> None:
     assert [t.track.id for t in tracks] == ids  # 元のリストは変更しない
     with pytest.raises(ValueError, match="already"):
         add_item(tracks, tracks[0].candidate)
+
     with pytest.raises(IndexError):
         move_item(tracks, 3, 1)
+
     with pytest.raises(IndexError):
         remove_item(tracks, -1)
 
@@ -353,6 +356,7 @@ def random_candidates(draw: st.DrawFn) -> list[Candidate]:
         )  # fmt: skip
         track = _hypothesis_track(i + 1, draw(st.integers(0, 3)), duration)
         candidates.append(Candidate(track, classification, None, draw(st.integers(0, 5))))
+
     return candidates
 
 
@@ -376,6 +380,8 @@ def test_generated_playlist_invariants(
     for item in result.tracks:
         assert item.score is not None
         assert item.score >= DEFAULTS.suitability_threshold
+
     if result.shortfall is None:
         assert result.total_duration_sec >= (duration - DEFAULTS.duration_tolerance_min) * 60
+
     assert generate_playlist(candidates, request, DEFAULTS).tracks == result.tracks

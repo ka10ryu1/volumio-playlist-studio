@@ -165,8 +165,11 @@ def test_mock_rejects_unknown_playlist_and_service() -> None:
 
     with pytest.raises(VolumioError, match="does not exist"):
         client.add_to_playlist("missing", URIS[0], "mpd")
+
     with pytest.raises(VolumioError, match="service"):
         client.add_to_playlist("p", URIS[0], "spotify")
+
     with pytest.raises(PlaylistExistsError):
         client.create_playlist("p")
+
     assert client.kind == "mock"

@@ -39,6 +39,7 @@ def test_planned_segments_stay_inside_track_and_do_not_overlap(
         assert segment.duration > 0
         assert segment.offset >= -1e-9
         assert segment.offset + segment.duration <= total + 1e-6
+
     for previous, current in itertools.pairwise(segments):
         assert previous.offset + previous.duration <= current.offset + 1e-6
 

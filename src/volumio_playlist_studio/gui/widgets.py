@@ -26,6 +26,7 @@ def format_duration(seconds: float | None) -> str:
     """秒を「分:秒」の文字列にする。不明なら「-」。"""
     if seconds is None:
         return "-"
+
     minutes, secs = divmod(round(seconds), _SECONDS_PER_MINUTE)
     return f"{minutes}:{secs:02d}"
 
@@ -50,6 +51,7 @@ def classification_details(result: ClassificationResult | None) -> None:
     if result is None:
         st.caption("未分類")
         return
+
     model = f"（モデル: {result.model}）" if result.model else ""
     st.caption(f"{result.engine} / {result.engine_version}{model}")
     confidence = "" if result.genre_confidence is None else f"（confidence {result.genre_confidence:.2f}）"
@@ -64,6 +66,7 @@ def classification_details(result: ClassificationResult | None) -> None:
                 "状態": "判定保留" if score.is_held else "",
             }
         )
+
     st.dataframe(rows, hide_index=True, width="stretch")
     for note in result.notes:
         st.caption(f"・{note}")
@@ -80,17 +83,21 @@ def music_folder_form(ctx: PageContext) -> None:
             help="SMB 共有は WSL にマウントしてから、マウント先を指定してください（README 参照）。",
         )
         submitted = st.form_submit_button("保存")
+
     if submitted:
         try:
             path = resolve_library_input(text, wsl=is_wsl())
         except LibraryPathError as exc:
             st.error(exc.user_message)
             return
+
         if not Path(path).is_dir():
             st.error("指定したフォルダが見つかりません。パスとマウント状態を確認してください。")
             return
+
         with transaction(ctx.conn):
             settings_store.set_value(ctx.conn, settings_store.MUSIC_ROOT_KEY, path.as_posix())
+
         st.success("音楽フォルダを保存しました。")
         st.rerun()
 
@@ -98,5 +105,6 @@ def music_folder_form(ctx: PageContext) -> None:
         count = load_demo_library(ctx.conn)
         with transaction(ctx.conn):
             settings_store.set_value(ctx.conn, settings_store.MUSIC_ROOT_KEY, "sample://demo")
+
         st.success(f"サンプルデータ {count} 曲を読み込みました。")
         st.rerun()

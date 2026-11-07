@@ -59,8 +59,10 @@ def _fatal_reason(exc: Exception) -> str | None:
     """続けても成功しない失敗なら、画面に表示する理由を返す。"""
     if isinstance(exc, TypeSafeAuthenticationError | TypeSafePermissionDeniedError):
         return "API キーが無効、または権限がありません。設定を確認してください。"
+
     if isinstance(exc, TypeSafeRateLimitError):
         return "レート制限に達しました。しばらく待ってから再実行してください。"
+
     return None
 
 
@@ -68,6 +70,7 @@ def _error_message(exc: Exception) -> str:
     # 応答本文には送信した state が含まれる可能性があるため、記録するのは種類とステータスだけにする
     if isinstance(exc, TypeSafeAPIError):
         return f"{type(exc).__name__}: status={exc.status}"
+
     return type(exc).__name__
 
 
@@ -100,6 +103,7 @@ def classify_tracks(
         if control.is_cancelled():
             stopped_reason = "ユーザーが中断しました。"
             break
+
         try:
             result = classifier.classify(track, features)
         except (TypeSafeError, JevResponseError) as exc:
@@ -108,6 +112,7 @@ def classify_tracks(
             error = ErrorRecord("classification", type(exc).__name__, _error_message(exc), classifier.engine_version)
             with transaction(conn):
                 record_error(conn, track.id, error)
+
             logger.warning(
                 "classification failed: engine=%s track_id=%d error=%s", classifier.engine, track.id, error.message
             )
@@ -116,6 +121,7 @@ def classify_tracks(
                 stopped_reason = (
                     f"{consecutive_failures} 回連続で失敗したため中断しました。通信状況を確認してください。"
                 )
+
             if stopped_reason is not None:
                 break
         else:
@@ -123,6 +129,7 @@ def classify_tracks(
             classified += 1
             with transaction(conn):
                 save_classification(conn, track.id, result)
+
         control.report(index + 1, len(targets))
 
     summary = ClassificationRunSummary(

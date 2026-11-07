@@ -60,6 +60,7 @@ def mood_scores(attributes: dict[Attribute, AttributeScore]) -> dict[Mood, float
         known = [v for v in values if v is not None]
         if len(known) == len(components):
             scores[mood] = sum(known) / len(known)
+
     return scores
 
 
@@ -71,9 +72,12 @@ def decide_mood(attributes: dict[Attribute, AttributeScore], decision: MoodDecis
     ranked = sorted(mood_scores(attributes).items(), key=lambda item: item[1], reverse=True)
     if not ranked:
         return None
+
     best_mood, best_score = ranked[0]
     if best_score < decision.min_score:
         return None
+
     if len(ranked) > 1 and best_score - ranked[1][1] < decision.min_margin:
         return None
+
     return best_mood

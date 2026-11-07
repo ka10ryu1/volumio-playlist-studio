@@ -17,6 +17,7 @@ def render(ctx: PageContext) -> None:
 
     if ctx.is_demo:
         st.caption("サンプルデータ（架空の楽曲）を表示しています。")
+
     stats = dashboard_stats(ctx.conn, ctx.library_root, ctx.classification_source)
 
     # 狭い画面では列が縦に並ぶため、1 行あたりの列数を少なめにする

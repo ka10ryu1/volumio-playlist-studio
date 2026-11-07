@@ -31,6 +31,7 @@ def normalize(value: float, bounds: tuple[float, float]) -> float:
     low, high = bounds
     if high <= low:
         raise ValueError("upper bound must be greater than lower bound")
+
     return min(1.0, max(0.0, (value - low) / (high - low)))
 
 

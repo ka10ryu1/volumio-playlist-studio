@@ -29,6 +29,7 @@ def render(ctx: PageContext) -> None:
     st.title("音楽ライブラリ")
     with st.expander("音楽フォルダ", expanded=ctx.library_root is None):
         music_folder_form(ctx)
+
     if ctx.library_root is None:
         return
 
@@ -50,6 +51,7 @@ def _actions(ctx: PageContext, library_root: str) -> None:
     if cols[0].button("スキャン（追加・更新を反映）", disabled=busy, width="stretch"):
         start_job("スキャン", ctx.config.database_path, lambda conn, control: run_scan(conn, root, control))
         st.rerun()
+
     if cols[1].button("未解析の曲を解析", disabled=busy, width="stretch"):
         start_job("音響解析", ctx.config.database_path, lambda conn, control: run_analysis(conn, root, control))
         st.rerun()
@@ -103,6 +105,7 @@ def _track_table(ctx: PageContext, tracks: list[Track]) -> None:
             state = "未解析"
         else:
             state = "解析済み"
+
         rows.append(
             {
                 "曲名": track.display_title,
@@ -115,10 +118,12 @@ def _track_table(ctx: PageContext, tracks: list[Track]) -> None:
                 "解析": state,
             }
         )
+
     st.dataframe(rows, hide_index=True, width="stretch")
 
     if not shown:
         return
+
     selected = st.selectbox("詳細を表示する曲", shown, format_func=track_label)
     if selected is not None:
         _track_detail(ctx, selected)
@@ -138,8 +143,10 @@ def _track_detail(ctx: PageContext, track: Track) -> None:
         )
         if track.title_source is not None and track.title_source.value == "filename":
             st.caption("曲名はファイル名から補完しました（タグに曲名がありません）。")
+
         if track.tags_repaired:
             st.caption("文字化けしたタグを修復して表示しています。")
+
         if track.tag_error:
             st.warning(f"タグの読み取りエラー: {track.tag_error}")
 
@@ -175,6 +182,7 @@ def _errors(ctx: PageContext, library_root: str) -> None:
         if not errors:
             st.caption("エラーはありません。")
             return
+
         st.dataframe(
             [
                 {
@@ -196,5 +204,6 @@ def _duplicates(ctx: PageContext, library_root: str, tracks: dict[int, Track]) -
     with st.expander(f"重複の可能性があるファイル（{len(groups)} 組）"):
         if not groups:
             st.caption("内容が同じと推定されるファイルはありません。")
+
         for group in groups:
             st.write(" / ".join(tracks[i].rel_path for i in group if i in tracks))

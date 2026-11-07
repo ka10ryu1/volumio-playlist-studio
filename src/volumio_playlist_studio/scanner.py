@@ -56,6 +56,7 @@ def find_audio_files(root: Path) -> list[Path]:
             for name in sorted(filenames)
             if not name.startswith(".") and Path(name).suffix.lower() in SUPPORTED_EXTENSIONS
         )
+
     return found
 
 
@@ -93,9 +94,11 @@ def scan_library(
         if control.is_cancelled():
             cancelled = True
             break
+
         with transaction(conn):
             for path in files[start : start + _COMMIT_INTERVAL]:
                 _scan_file(conn, root, path, snapshots, counters)
+
         control.report(min(start + _COMMIT_INTERVAL, len(files)), len(files))
 
     missing_ids = [] if cancelled else _missing_track_ids(snapshots, counters.seen)
@@ -145,6 +148,7 @@ def _scan_file(
         ):
             counters.unchanged += 1
             return
+
         result = read_metadata(path, rel_path)
     except OSError as exc:
         counters.errors += 1

@@ -62,6 +62,7 @@ def render(ctx: PageContext) -> None:
     result: GenerationResult | None = st.session_state.get(_RESULT_KEY)
     if result is None:
         return
+
     _shortfall_notice(candidates, result, defaults)
     _draft_editor(ctx, candidates, result)
     volumio_panel.render(ctx, st.session_state.get(_SAVED_KEY))
@@ -80,6 +81,7 @@ def _mood_cards() -> Mood:
             if st.button(label, key=f"mood-{mood.value}", type="primary" if mood == selected else "secondary"):
                 st.session_state[_MOOD_KEY] = mood
                 st.rerun()
+
     return selected
 
 
@@ -88,6 +90,7 @@ def _conditions_form(mood: Mood, defaults: PlaylistDefaults) -> PlaylistRequest 
     # seed の初期値は画面を開いたときに 1 回だけ決める（再実行のたびに変わると入力が消えるため）
     if _SEED_KEY not in st.session_state:
         st.session_state[_SEED_KEY] = int(datetime.now().timestamp()) % _MAX_SEED
+
     with st.form("playlist-conditions"):
         by_count = st.radio("長さの指定", ["再生時間", "曲数"], horizontal=True) == "曲数"
         duration = st.slider(
@@ -115,10 +118,12 @@ def _conditions_form(mood: Mood, defaults: PlaylistDefaults) -> PlaylistRequest 
 
     if not submitted:
         return None
+
     genre_mode = genre_mode or GenreMode.ALL
     if genre_mode != GenreMode.ALL and not genres:
         st.error("ジャンルを 1 つ以上選んでください。")
         return None
+
     return PlaylistRequest(
         mood=mood,
         duration_min=None if by_count else int(duration),
@@ -145,6 +150,7 @@ def _generate(candidates: list[Candidate], request: PlaylistRequest, defaults: P
 def _shortfall_notice(candidates: list[Candidate], result: GenerationResult, defaults: PlaylistDefaults) -> None:
     for warning in result.warnings:
         st.warning(warning)
+
     shortfall = result.shortfall
     if shortfall is None:
         return
@@ -156,6 +162,7 @@ def _shortfall_notice(candidates: list[Candidate], result: GenerationResult, def
         )
     else:
         amount = f"目標 {shortfall.requested:.0f} 曲に対して {shortfall.achieved:.0f} 曲"
+
     excluded = "、".join(f"{reason} {n} 曲" for reason, n in shortfall.excluded.items() if n) or "なし"
     st.warning(
         f"条件に合う曲が足りません（{amount}）。除外した曲: {excluded}\n\n"
@@ -182,8 +189,10 @@ def _draft_editor(ctx: PageContext, candidates: list[Candidate], result: Generat
         )
         if cols[1].button("↑", key=f"up-{index}", disabled=index == 0, help="前へ"):
             _update_draft(move_item(draft, index, -1))
+
         if cols[2].button("↓", key=f"down-{index}", disabled=index == len(draft) - 1, help="後ろへ"):
             _update_draft(move_item(draft, index, 1))
+
         if cols[3].button("✕", key=f"remove-{index}", help="除外"):
             _update_draft(remove_item(draft, index))
 

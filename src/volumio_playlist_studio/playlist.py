@@ -89,14 +89,18 @@ class PlaylistRequest:
         """
         if (self.duration_min is None) == (self.track_count is None):
             raise ValueError("exactly one of duration_min and track_count must be set")
+
         if self.duration_min is not None and not (
             defaults.min_duration_min <= self.duration_min <= defaults.max_duration_min
         ):
             raise ValueError("duration_min is out of range")
+
         if self.track_count is not None and not 1 <= self.track_count <= defaults.max_track_count:
             raise ValueError("track_count is out of range")
+
         if self.genre_mode != GenreMode.ALL and not self.genres:
             raise ValueError("genres must be specified unless genre_mode is all")
+
         if not (0.0 <= self.novelty <= 1.0 and 0.0 <= self.randomness <= 1.0):
             raise ValueError("novelty and randomness must be between 0 and 1")
 
@@ -182,6 +186,7 @@ def suitability(classification: ClassificationResult | None, mood: Mood) -> floa
     """分類結果の、雰囲気への適合度（0〜1）を返す。主属性が判定保留なら None。"""
     if mood == Mood.OMAKASE:
         return _OMAKASE_SUITABILITY
+
     if classification is None:
         return None
 
@@ -196,6 +201,7 @@ def suitability(classification: ClassificationResult | None, mood: Mood) -> floa
         if value is not None:
             weighted += weight * (1.0 - abs(value - target))
             total_weight += weight
+
     return weighted / total_weight
 
 
@@ -203,6 +209,7 @@ def duplicate_key(track: Track) -> str:
     """同じ曲とみなすためのキー。曲名とアーティストが分かればそれを、なければファイル内容のハッシュを使う。"""
     if track.title and track.artist:
         return f"meta:{track.title.casefold().strip()}|{track.artist.casefold().strip()}"
+
     return f"hash:{track.quick_hash or track.rel_path}"
 
 
@@ -234,6 +241,7 @@ def generate_playlist(
     warnings: list[str] = []
     if request.smooth_order:
         selected = _smooth_order(selected, request.mood)
+
     if request.avoid_same_artist and not _separate_artists(selected):
         warnings.append("同じアーティストの曲が多く、連続を避けきれない箇所があります。")
 
@@ -261,13 +269,16 @@ def _score_candidates(
         if request.genre_mode != GenreMode.ALL and candidate.genre not in allowed_genres:
             excluded[REASON_GENRE] += 1
             continue
+
         fit = suitability(candidate.classification, request.mood)
         if fit is None:
             excluded[REASON_UNCLASSIFIED] += 1
             continue
+
         if fit < threshold:
             excluded[REASON_UNSUITABLE] += 1
             continue
+
         if request.duration_min is not None and not candidate.track.duration_sec:
             excluded[REASON_NO_DURATION] += 1
             continue
@@ -276,6 +287,7 @@ def _score_candidates(
         novelty_bonus = request.novelty * (1 - familiarity) + (1 - request.novelty) * familiarity
         rank = fit + _NOVELTY_WEIGHT * novelty_bonus + _RANDOMNESS_WEIGHT * request.randomness * noise
         result.append((candidate, fit, rank))
+
     return result
 
 
@@ -290,12 +302,14 @@ def _ranked_order(
     by_genre: dict[Genre | None, list[tuple[Candidate, float]]] = {}
     for c, fit, _ in ordered:
         by_genre.setdefault(c.genre, []).append((c, fit))
+
     queues = [by_genre[g] for g in request.genres if g in by_genre]
     interleaved: list[tuple[Candidate, float]] = []
     while any(queues):
         for queue in queues:
             if queue:
                 interleaved.append(queue.pop(0))
+
     return interleaved
 
 
@@ -315,6 +329,7 @@ def _select(
         if target_sec is not None and upper_sec is not None:
             if total >= target_sec:
                 break
+
             duration = candidate.track.duration_sec or 0.0
             if total + duration > upper_sec:
                 continue
@@ -325,9 +340,11 @@ def _select(
         if request.avoid_duplicates and key in seen_keys:
             excluded[REASON_DUPLICATE] += 1
             continue
+
         seen_keys.add(key)
         chosen.append((candidate, fit))
         total += candidate.track.duration_sec or 0.0
+
     return chosen
 
 
@@ -360,6 +377,7 @@ def _smooth_order(tracks: list[SelectedTrack], mood: Mood) -> list[SelectedTrack
 
     if mood in _WIND_DOWN_MOODS:
         ordered.reverse()
+
     return ordered
 
 
@@ -381,10 +399,12 @@ def _separate_artists(tracks: list[SelectedTrack]) -> bool:
     for i in range(1, len(tracks)):
         if not _same_artist(tracks[i - 1], tracks[i]):
             continue
+
         for j in range(i + 1, len(tracks)):
             if not _same_artist(tracks[i - 1], tracks[j]):
                 tracks.insert(i, tracks.pop(j))
                 break
+
     return all(not _same_artist(tracks[i - 1], tracks[i]) for i in range(1, len(tracks)))
 
 
@@ -396,23 +416,29 @@ def _shortfall(
         achieved = total_duration(tracks)
         if achieved >= requested - defaults.duration_tolerance_min * 60.0:
             return None
+
         unit = "seconds"
     else:
         requested = float(request.track_count or 0)
         achieved = float(len(tracks))
         if achieved >= requested:
             return None
+
         unit = "tracks"
 
     suggestions: list[str] = []
     if excluded[REASON_GENRE]:
         suggestions.append("ジャンルの指定を「全ジャンル」にするか、ジャンルを追加する")
+
     if excluded[REASON_UNSUITABLE] and not request.relaxed:
         suggestions.append("条件を緩和して再生成する（雰囲気への適合度の基準を下げる）")
+
     if excluded[REASON_UNCLASSIFIED]:
         suggestions.append("未解析・未判定の曲を解析または判定する")
+
     if unit == "seconds":
         suggestions.append("再生時間を短くする")
+
     return Shortfall(requested, achieved, unit, dict(excluded), suggestions)
 
 
@@ -420,6 +446,7 @@ def move_item(tracks: list[SelectedTrack], index: int, offset: int) -> list[Sele
     """曲を前後に移動した新しいリストを返す。範囲外への移動は端で止める。"""
     if not 0 <= index < len(tracks):
         raise IndexError("index out of range")
+
     result = list(tracks)
     item = result.pop(index)
     result.insert(max(0, min(len(result), index + offset)), item)
@@ -430,6 +457,7 @@ def remove_item(tracks: list[SelectedTrack], index: int) -> list[SelectedTrack]:
     """曲を除外した新しいリストを返す。"""
     if not 0 <= index < len(tracks):
         raise IndexError("index out of range")
+
     return tracks[:index] + tracks[index + 1 :]
 
 
@@ -441,4 +469,5 @@ def add_item(tracks: list[SelectedTrack], candidate: Candidate) -> list[Selected
     """
     if any(t.track.id == candidate.track.id for t in tracks):
         raise ValueError("track is already in the playlist")
+
     return [*tracks, SelectedTrack(candidate=candidate, score=None, added_manually=True)]

@@ -162,6 +162,7 @@ def list_tracks(conn: sqlite3.Connection, library_root: str, *, include_missing:
         query = "SELECT * FROM tracks WHERE library_root = ? ORDER BY rel_path"
     else:
         query = "SELECT * FROM tracks WHERE library_root = ? AND status = 'active' ORDER BY rel_path"
+
     rows = conn.execute(query, (library_root,)).fetchall()
     return [row_to_track(row) for row in rows]
 

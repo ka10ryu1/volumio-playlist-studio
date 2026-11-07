@@ -167,6 +167,7 @@ class AudioFeatures:
         data = asdict(self)
         for key in ("chroma_mean", "mfcc_mean", "mfcc_std"):
             data[key] = list(data[key])
+
         return data
 
     @classmethod
@@ -185,6 +186,7 @@ class AudioFeatures:
 
         if not all(math.isfinite(v) for v in scalars.values()):
             raise ValueError("audio features must be finite")
+
         return cls(
             tempo_bpm=scalars["tempo_bpm"],
             tempo_variation=scalars["tempo_variation"],

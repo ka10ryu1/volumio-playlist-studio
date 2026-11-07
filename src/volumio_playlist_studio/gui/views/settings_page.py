@@ -48,6 +48,7 @@ def _volumio_section(ctx: PageContext) -> None:
         if st.form_submit_button("保存"):
             with transaction(ctx.conn):
                 settings_store.set_value(ctx.conn, settings_store.VOLUMIO_HOST_KEY, host.strip())
+
             st.success("保存しました。")
 
 
@@ -57,6 +58,7 @@ def _jev_section(ctx: PageContext) -> None:
         st.success(f"API キー: 設定済み（環境変数 {TYPESAFE_API_KEY_ENV}）")
     else:
         st.warning(f"API キー: 未設定。環境変数 {TYPESAFE_API_KEY_ENV} または .env に設定してください。")
+
     st.caption("API キーの値は画面にもログにも表示しません。")
 
     settings = settings_store.get_jev_settings(ctx.conn)
@@ -85,6 +87,7 @@ def _jev_section(ctx: PageContext) -> None:
             )
             with transaction(ctx.conn):
                 settings_store.set_jev_settings(ctx.conn, updated)
+
             st.success("保存しました。判定基準の変更は、次に Jev で判定した曲から反映されます。")
 
 
@@ -135,6 +138,7 @@ def _engine_section(ctx: PageContext) -> None:
         if st.form_submit_button("保存"):
             with transaction(ctx.conn):
                 settings_store.set_value(ctx.conn, settings_store.CLASSIFICATION_SOURCE_KEY, source.value)
+
             st.success("保存しました。")
             st.rerun()
 
@@ -144,10 +148,12 @@ def _log_section(ctx: PageContext) -> None:
     if ctx.library_root is not None:
         errors = analysis_store.list_errors(ctx.conn, ctx.library_root, limit=50)
         st.caption(f"未解決の解析エラー: {len(errors)} 件（詳細は音楽ライブラリ画面）")
+
     with st.expander("アプリのログ（最新 200 行）"):
         path = ctx.config.log_path
         if not path.exists():
             st.caption("ログはまだありません。")
             return
+
         with path.open(encoding="utf-8", errors="replace") as f:
             st.code("".join(deque(f, maxlen=_LOG_TAIL_LINES)), language="text")

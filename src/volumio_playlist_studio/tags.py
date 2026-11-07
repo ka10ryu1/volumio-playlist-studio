@@ -58,8 +58,10 @@ def repair_mojibake(text: str) -> tuple[str, bool]:
             candidate = raw.decode(encoding)
         except UnicodeDecodeError:
             continue
+
         if _JAPANESE_CHAR.search(candidate) and not _C1_CONTROL.search(candidate):
             return candidate, True
+
     return text, False
 
 
@@ -81,6 +83,7 @@ def quick_hash(path: Path, file_size: int) -> str:
         if file_size > _HASH_CHUNK_BYTES * 2:
             f.seek(-_HASH_CHUNK_BYTES, 2)
             digest.update(f.read(_HASH_CHUNK_BYTES))
+
     return digest.hexdigest()
 
 
@@ -146,24 +149,28 @@ def _normalized_tags(audio: mutagen.FileType | None) -> dict[str, str]:
     tags = getattr(audio, "tags", None)
     if tags is None:
         return {}
+
     result: dict[str, str] = {}
     for key, value in tags.items():
         values = value if isinstance(value, list) else [value]
         texts = [str(v).strip() for v in values if str(v).strip()]
         if texts:
             result[str(key).lower()] = unicodedata.normalize("NFC", texts[0])
+
     return result
 
 
 def _repaired(value: str | None) -> tuple[str | None, bool]:
     if value is None:
         return None, False
+
     return repair_mojibake(value)
 
 
 def _parse_year(value: str | None) -> int | None:
     if value is None:
         return None
+
     match = _YEAR.search(value)
     return None if match is None else int(match.group(1))
 
@@ -171,6 +178,7 @@ def _parse_year(value: str | None) -> int | None:
 def _parse_track_number(value: str | None) -> int | None:
     if value is None:
         return None
+
     match = _TRACK_NUMBER.match(value)
     return None if match is None else int(match.group(1))
 

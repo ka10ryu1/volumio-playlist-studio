@@ -4,6 +4,13 @@
 
 @AGENTS.md
 
+## コードスタイル（AGENTS.md への追加）
+
+- インデントが戻る場所（if / for / while / with / try / match などのブロックの終了後）には空行を入れる。ネストの深さは問わず、ループの中やガード節（早期の return / continue / raise）の後にも入れる。ただし else / elif / except / finally / case など、同じ構文の続きを表すキーワードの前には入れない
+  - `uv run python tools/insert_block_blank_lines.py src tests tools` で機械的に挿入できる（`--check` で確認のみ）
+  - `tests/test_block_spacing.py` がリポジトリ全体を検査するため、守られていないと `uv run pytest` が失敗する
+  - `ruff format` の後に実行する（ruff format はこの空行を削除しない）
+
 ## このプロジェクト固有の注意点
 
 ### 構成

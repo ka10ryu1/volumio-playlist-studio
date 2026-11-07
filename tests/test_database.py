@@ -21,6 +21,7 @@ def test_data_persists_after_reopening(tmp_path: Path) -> None:
     conn = connect(path)
     with transaction(conn):
         conn.execute("INSERT INTO app_settings (key, value_json, updated_at) VALUES ('k', '\"値\"', 'now')")
+
     conn.close()
 
     reopened = connect(path)
@@ -56,6 +57,7 @@ def test_migration_backs_up_existing_database(tmp_path: Path, monkeypatch: pytes
     conn = connect(path)
     with transaction(conn):
         conn.execute("INSERT INTO app_settings (key, value_json, updated_at) VALUES ('k', '1', 'now')")
+
     conn.close()
     # スキーマの変更を追加した次のバージョンのアプリを模擬する
     monkeypatch.setattr(database, "MIGRATIONS", (*database.MIGRATIONS, ("CREATE TABLE extra (x INTEGER)",)))
@@ -76,6 +78,7 @@ def test_failed_migration_keeps_existing_data(tmp_path: Path, monkeypatch: pytes
     conn = connect(path)
     with transaction(conn):
         conn.execute("INSERT INTO app_settings (key, value_json, updated_at) VALUES ('k', '1', 'now')")
+
     conn.close()
     broken = ("CREATE TABLE half_done (x INTEGER)", "THIS IS NOT SQL")
     monkeypatch.setattr(database, "MIGRATIONS", (*database.MIGRATIONS, broken))

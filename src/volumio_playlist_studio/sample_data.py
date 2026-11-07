@@ -118,13 +118,16 @@ def load_demo_library(conn: sqlite3.Connection, seed: int = 0) -> int:
                 track = get_track(conn, track_id)
                 if track is None:  # 直前に登録した行が見つからないのは DB の異常
                     raise RuntimeError("inserted demo track was not found")
+
                 features = _demo_features(style, rng)
                 analysis_store.save_features(
                     conn, track, features, analysis_store.FeatureRun(AnalysisParams(), ANALYSIS_VERSION, 0.0)
                 )
                 analysis_store.save_classification(conn, track_id, rules.classify(track, features))
                 count += 1
+
         record_scan(conn, DEMO_LIBRARY_ROOT, started_at, ScanSummary(count, 0, 0, 0, 0, 0.0))
+
     logger.info("demo library loaded: tracks=%d", count)
     return count
 
@@ -139,6 +142,7 @@ def _synth(kind: str, seconds: float, rng: np.random.Generator) -> np.ndarray:
         clicks[:: int(_SAMPLE_RATE * 60 / 140)] = 1.0
         signal = signal + 0.6 * np.convolve(clicks, np.hanning(200), mode="same")
         signal = signal + 0.05 * rng.normal(size=len(t))
+
     return np.clip(signal, -1.0, 1.0).astype(np.float32)
 
 
@@ -168,11 +172,13 @@ def generate_sample_audio(directory: Path, seconds: float = 30.0, seed: int = 0)
         audio = mutagen.File(path, easy=True)
         if audio is None:  # 直前に書き込んだ FLAC を読めないのは異常
             raise RuntimeError("generated sample audio is not readable")
+
         audio.update(
             {"title": title, "artist": artist, "album": "サンプル音源", "genre": genre, "tracknumber": str(index)}
         )
         audio.save()
         paths.append(path)
+
     return paths
 
 
@@ -195,7 +201,9 @@ def main(argv: list[str] | None = None) -> int:
             count = load_demo_library(conn)
         finally:
             conn.close()
+
         sys.stdout.write(f"{count} 曲のサンプルデータを登録しました\n")
+
     return 0
 
 

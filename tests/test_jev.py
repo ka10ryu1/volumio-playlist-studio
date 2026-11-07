@@ -86,6 +86,7 @@ class Recorder:
         # SDK は既定で送信本文を zstd で圧縮する
         if request.headers.get("content-encoding") == "zstd":
             content = zstd.decompress(content)
+
         self.requests.append({"url": str(request.url), "headers": dict(request.headers), "body": json.loads(content)})
         responder = self._responses[min(len(self.requests), len(self._responses)) - 1]
         return responder(request)
@@ -243,6 +244,7 @@ def _register_tracks(db: sqlite3.Connection, count: int) -> list[tuple[int, str]
             file_size=1, mtime_ns=0, title_source=TitleSource.TAG, tags_repaired=False, quick_hash=None,
         )  # fmt: skip
         ids.append((upsert_track(db, "/music", meta, None), f"曲{i}.flac"))
+
     return ids
 
 

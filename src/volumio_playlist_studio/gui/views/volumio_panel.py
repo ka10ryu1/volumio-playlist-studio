@@ -42,6 +42,7 @@ def _mock_client(library_root: str, tracks: list[Track]) -> MockVolumioClient:
     cached: tuple[str, MockVolumioClient] | None = st.session_state.get(_MOCK_KEY)
     if cached is not None and cached[0] == library_root:
         return cached[1]
+
     client = MockVolumioClient.from_track_uris([f"{_MOCK_STORAGE_PREFIX}/{t.rel_path}" for t in tracks])
     st.session_state[_MOCK_KEY] = (library_root, client)
     return client
@@ -73,6 +74,7 @@ def _preview_and_register(ctx: PageContext, playlist: SavedPlaylist) -> None:
     except VolumioError:
         st.error("Volumio のライブラリを取得できませんでした。")
         return
+
     matches = match_tracks_to_uris(tracks, uris)
 
     st.markdown("**登録前のプレビュー**")
@@ -91,6 +93,7 @@ def _preview_and_register(ctx: PageContext, playlist: SavedPlaylist) -> None:
     name = st.text_input("Volumio のプレイリスト名", value=playlist.name, key=f"volumio-name-{playlist.id}")
     if name.strip() in client.list_playlists():
         st.warning("同じ名前のプレイリストが既にあります。既存のプレイリストは変更しないため、別の名前にしてください。")
+
     confirmed = st.checkbox("この内容で新しいプレイリストを作成します", key=f"volumio-confirm-{playlist.id}")
     if st.button("Volumio に登録", disabled=not confirmed, key=f"volumio-register-{playlist.id}"):
         _register(ctx, client, playlist, name, [(t.id, m.uri) for t, m in zip(tracks, matches, strict=True)])
@@ -133,6 +136,7 @@ def _register(
                 playlist.id, name.strip(), client.kind, outcome.status, outcome.error, started_at, outcome.items
             ),
         )
+
     added = sum(1 for i in outcome.items if i.status == "added")
     if outcome.status == "success":
         st.success(f"{added} 曲を登録しました。")

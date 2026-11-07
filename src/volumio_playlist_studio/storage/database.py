@@ -198,6 +198,7 @@ def connect(path: Path) -> sqlite3.Connection:
     except BaseException:
         conn.close()
         raise
+
     return conn
 
 
@@ -210,6 +211,7 @@ def transaction(conn: sqlite3.Connection) -> Iterator[sqlite3.Connection]:
     except BaseException:
         conn.execute("ROLLBACK")
         raise
+
     conn.execute("COMMIT")
 
 
@@ -232,6 +234,7 @@ def migrate(conn: sqlite3.Connection, path: Path | None = None) -> None:
     version = current_version(conn)
     if version > SCHEMA_VERSION:
         raise RuntimeError(f"database schema version {version} is newer than supported {SCHEMA_VERSION}")
+
     if version == SCHEMA_VERSION:
         return
 
@@ -242,12 +245,15 @@ def migrate(conn: sqlite3.Connection, path: Path | None = None) -> None:
         for statements in MIGRATIONS[version:]:
             for statement in statements:
                 conn.execute(statement)
+
         # PRAGMA にはパラメータを渡せないため、整数に変換した値を埋め込む
         conn.execute(f"PRAGMA user_version = {int(SCHEMA_VERSION)}")
+
     logger.info("database migrated: from=%d to=%d", version, SCHEMA_VERSION)
 
 
 def _backup(conn: sqlite3.Connection, backup_path: Path) -> None:
     with closing(sqlite3.connect(backup_path)) as backup:
         conn.backup(backup)
+
     logger.info("database backed up before migration: file=%s", backup_path.name)
