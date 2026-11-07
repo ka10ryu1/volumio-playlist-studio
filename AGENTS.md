@@ -16,7 +16,14 @@
 - パッケージ・仮想環境の管理には uv を使う。依存関係は `uv add` / `uv remove` で `pyproject.toml` と `uv.lock` を更新し、`pip install` で直接入れない
 - コマンドは `uv run <command>` で実行する
 - ツールの設定は `pyproject.toml` に集約する。リンターや型検査の警告を設定変更や `# noqa` / `# type: ignore` で黙らせない。抑制が正当な場合は、対象を最小限に絞り、理由をコメントで残す
-- GUI フレームワークと音声解析ライブラリは未決定。導入時はユーザーに確認し、決定したらこの節に追記する
+- 採用したライブラリ（ユーザーの指定に基づく）。これ以外のライブラリを導入するときはユーザーに確認し、この節に追記する
+  - GUI: Streamlit（起動: `uv run streamlit run src/volumio_playlist_studio/gui/app.py`）
+  - タグ取得: mutagen
+  - 音響解析: librosa、soundfile
+  - AI 判定: TypeSafe Jev（公式 SDK `typesafe-sdk`）
+  - 設定の読み込み: python-dotenv（`.env`）
+  - LAN 接続用の QR コード: qrcode（型スタブは開発用の types-qrcode）
+  - データベース: SQLite（標準ライブラリの `sqlite3`）
 
 | 用途 | コマンド |
 |---|---|

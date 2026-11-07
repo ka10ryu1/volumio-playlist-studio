@@ -1,0 +1,3 @@
+# Windows のランチャーは CRLF で保存する（バッチファイルは LF だと誤動作することがあるため）
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

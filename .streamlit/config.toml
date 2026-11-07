@@ -1,0 +1,9 @@
+# 初期状態ではこの PC からのみ接続できるようにする。
+# iPhone などから LAN 経由で使う場合のリスクと設定方法は README の「LAN からのアクセス」を参照。
+[server]
+address = "localhost"
+headless = true
+
+[browser]
+# Streamlit への利用統計の送信を無効にする
+gatherUsageStats = false

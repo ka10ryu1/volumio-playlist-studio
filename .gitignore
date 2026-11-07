@@ -218,3 +218,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# アプリのデータ（SQLite の実データ・ログ）。利用者固有のデータを含むため管理しない
+/data/
+*.sqlite3
+*.sqlite3-*
+*.sqlite3.bak-*
+
+# Windows でネットワーク上のフォルダ（\\wsl.localhost など）から setup.cmd を実行したときの仮想環境
+.venv-windows/

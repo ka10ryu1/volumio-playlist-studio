@@ -89,9 +89,11 @@ def _resolve_segments(segments: list[str]) -> list[str] | None:
         if segment == "..":
             if not stack:
                 return None
+
             stack.pop()
         elif segment != ".":
             stack.append(segment)
+
     return stack
 
 
