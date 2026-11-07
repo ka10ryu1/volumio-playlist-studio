@@ -49,3 +49,22 @@ jobs:
       - name: Test
         if: ${{ !cancelled() && steps.sync.outcome == 'success' }}
         run: uv run --no-sync pytest
+
+  # Windows でダブルクリックで使うセットアップ（setup.ps1）と起動処理が動くことを確認する。
+  # 利用者の環境と同じく、.cmd から呼ばれる Windows PowerShell 5.1 で実行する
+  windows-setup:
+    name: windows-setup-and-start
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+
+      - name: Setup and start
+        shell: powershell
+        run: .\tests\windows\test_setup_and_start.ps1
