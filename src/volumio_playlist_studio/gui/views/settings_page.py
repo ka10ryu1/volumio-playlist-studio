@@ -17,8 +17,11 @@ from volumio_playlist_studio.models import CLASSIFICATION_SOURCE_LABELS, Classif
 from volumio_playlist_studio.storage import analysis as analysis_store
 from volumio_playlist_studio.storage import settings_store
 from volumio_playlist_studio.storage.database import transaction
+from volumio_playlist_studio.volumio import VolumioError
+from volumio_playlist_studio.volumio_rest import VolumioRestClient, parse_host
 
 _LOG_TAIL_LINES = 200
+_VOLUMIO_SAVED_KEY = "volumio_host_saved"
 _SAMPLE_RATES = [16000, 22050, 32000, 44100]
 
 
@@ -40,16 +43,53 @@ def render(ctx: PageContext) -> None:
 def _volumio_section(ctx: PageContext) -> None:
     st.subheader("Volumio 接続先")
     saved = settings_store.get_str(ctx.conn, settings_store.VOLUMIO_HOST_KEY)
-    current = ctx.config.volumio_host or saved
+    current = ctx.volumio_host
     st.caption(f"現在: {current or '未設定'}（環境変数 {VOLUMIO_HOST_ENV} が設定されていればそちらを優先）")
-    st.info("Volumio 実機との通信は未実装です。登録はモッククライアントでのみ確認できます。")
+    st.info(
+        "Volumio からは、プレイリスト一覧と曲の一覧を読み取るだけです（Volumio は変更しません）。"
+        "Volumio へのプレイリストの登録は未実装で、モックでのみ確認できます。"
+    )
     with st.form("volumio-host"):
         host = st.text_input("ホスト名または IP アドレス", value=saved or "", placeholder="volumio.local")
         if st.form_submit_button("保存"):
-            with transaction(ctx.conn):
-                settings_store.set_value(ctx.conn, settings_store.VOLUMIO_HOST_KEY, host.strip())
+            _save_volumio_host(ctx, host.strip())
 
-            st.success("保存しました。")
+    if st.session_state.pop(_VOLUMIO_SAVED_KEY, False):
+        st.success("保存しました。")
+
+    if current is not None and st.button("接続テスト（プレイリスト一覧を読み取る）"):
+        _test_volumio_connection(current)
+
+
+def _save_volumio_host(ctx: PageContext, host: str) -> None:
+    if host:
+        try:
+            parse_host(host)
+        except ValueError:
+            st.error("ホスト名または IP アドレスの形式が正しくありません（例: volumio.local、192.168.1.22）。")
+            return
+
+    with transaction(ctx.conn):
+        settings_store.set_value(ctx.conn, settings_store.VOLUMIO_HOST_KEY, host)
+
+    # 保存した接続先で「現在」の表示と接続テストのボタンを出し直すため、画面を描き直す
+    st.session_state[_VOLUMIO_SAVED_KEY] = True
+    st.rerun()
+
+
+def _test_volumio_connection(host: str) -> None:
+    try:
+        # 1 回のリクエストで終わるため、短いタイムアウトで画面の処理として実行する
+        with st.spinner("Volumio に接続しています…"):
+            playlists = VolumioRestClient(host, timeout=5.0).list_playlists()
+    except VolumioError, ValueError:
+        st.error(
+            "Volumio に接続できませんでした。接続先と、Volumio が同じネットワークで起動しているかを確認してください。"
+        )
+        return
+
+    names = "、".join(playlists) if playlists else "（なし）"
+    st.success(f"接続できました。既存のプレイリスト {len(playlists)} 件: {names}")
 
 
 def _jev_section(ctx: PageContext) -> None:

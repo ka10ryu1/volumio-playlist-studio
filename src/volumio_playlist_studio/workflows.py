@@ -18,6 +18,10 @@ from volumio_playlist_studio.jobs import JobControl
 from volumio_playlist_studio.scanner import scan_library
 from volumio_playlist_studio.storage import analysis as analysis_store
 from volumio_playlist_studio.storage import settings_store
+from volumio_playlist_studio.storage.database import transaction
+from volumio_playlist_studio.storage.volumio_library import replace_uris
+from volumio_playlist_studio.volumio import collect_track_uris
+from volumio_playlist_studio.volumio_rest import VolumioRestClient
 
 
 @dataclass(frozen=True)
@@ -112,3 +116,17 @@ def run_jev(
         message += f" {summary.stopped_reason}"
 
     return message
+
+
+def run_volumio_sync(conn: sqlite3.Connection, host: str, control: JobControl) -> str:
+    """Volumio のライブラリから曲の URI の一覧を取得して保存する。Volumio の状態は変更しない。
+
+    Raises:
+        VolumioError: 通信に失敗した場合、または中断した場合。
+        ValueError: 接続先の形式が不正な場合。
+    """
+    uris = collect_track_uris(VolumioRestClient(host), control=control)
+    with transaction(conn):
+        replace_uris(conn, host, uris)
+
+    return f"Volumio のライブラリから {len(uris)} 曲の情報を取得しました。"

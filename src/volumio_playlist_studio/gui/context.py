@@ -40,6 +40,11 @@ class PageContext:
         return self.library_root == DEMO_LIBRARY_ROOT
 
     @property
+    def volumio_host(self) -> str | None:
+        """Volumio の接続先。環境変数（.env の VOLUMIO_HOST）を、設定画面で保存した値より優先する。"""
+        return self.config.volumio_host or settings_store.get_str(self.conn, settings_store.VOLUMIO_HOST_KEY)
+
+    @property
     def classification_source(self) -> ClassificationSource:
         """選曲に使う分類結果の種類。"""
         value = settings_store.get_str(self.conn, settings_store.CLASSIFICATION_SOURCE_KEY)

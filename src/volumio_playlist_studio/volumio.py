@@ -1,8 +1,8 @@
 """Volumio との連携のインターフェース、モック、楽曲 URI の照合、プレイリスト登録処理。
 
-現時点では実機と通信するクライアントは実装していない（docs/volumio.md の調査結果を参照）。
-プレイリストの作成・曲の追加は Volumio の WebSocket（Socket.io）API にしかなく、Volumio 4 での
-互換性を実機で確認してから実装する。それまではモッククライアントで画面と処理の流れを確認する。
+実機との通信は、読み取り（プレイリスト一覧・ライブラリの参照）だけを REST API で実装している
+（volumio_rest.py）。プレイリストの作成・曲の追加は WebSocket（Socket.io）API にしかなく、
+方式が決まるまではモッククライアントで画面と処理の流れを確認する（docs/volumio.md）。
 
 PC 上のファイルパスと Volumio 上の URI は、文字列の変換で対応付けない。Volumio のライブラリを
 参照して得た実際の URI の一覧と照合し、一意に対応する場合だけ登録に使う。
@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Protocol
 
+from volumio_playlist_studio.jobs import JobControl
 from volumio_playlist_studio.models import Track
 from volumio_playlist_studio.storage.playlists import RegistrationItem
 
@@ -43,12 +44,12 @@ class BrowseItem:
     service: str | None = None
 
 
-class VolumioClient(Protocol):
-    """Volumio との通信。実機用とモックで同じインターフェースを実装する。"""
+class VolumioReader(Protocol):
+    """Volumio からの読み取り。Volumio の状態を変更しない。"""
 
     @property
     def kind(self) -> str:
-        """クライアントの種類（`mock` など）。登録履歴に記録する。"""
+        """クライアントの種類（`mock`、`rest` など）。登録履歴に記録する。"""
         ...
 
     def list_playlists(self) -> list[str]:
@@ -58,6 +59,10 @@ class VolumioClient(Protocol):
     def browse(self, uri: str) -> list[BrowseItem]:
         """ライブラリの指定した URI の直下の項目を返す。"""
         ...
+
+
+class VolumioClient(VolumioReader, Protocol):
+    """Volumio への読み取りと書き込み。実機用とモックで同じインターフェースを実装する。"""
 
     def create_playlist(self, name: str) -> None:
         """空のプレイリストを作成する。失敗時は VolumioError を送出する。"""
@@ -143,18 +148,31 @@ class MockVolumioClient:
 
 
 def collect_track_uris(
-    client: VolumioClient, root_uri: str = "music-library", max_items: int = _DEFAULT_MAX_BROWSE_ITEMS
+    client: VolumioReader,
+    root_uri: str = "music-library",
+    max_items: int = _DEFAULT_MAX_BROWSE_ITEMS,
+    control: JobControl | None = None,
 ) -> list[str]:
     """Volumio のライブラリをたどり、曲の URI を収集する。
 
+    Args:
+        client: Volumio からの読み取り。
+        root_uri: たどり始める URI。
+        max_items: たどる項目数の上限。
+        control: 進捗通知（たどったフォルダの数, 見つかったフォルダの数）と中断の受け付け。
+
     Raises:
-        VolumioError: 項目数が上限を超えた場合、または通信に失敗した場合。
+        VolumioError: 項目数が上限を超えた場合、中断した場合、または通信に失敗した場合。
     """
+    control = control or JobControl()
     uris: list[str] = []
     queue = deque([root_uri])
     visited = {root_uri}
     count = 0
     while queue:
+        if control.is_cancelled():
+            raise VolumioError("cancelled")
+
         for item in client.browse(queue.popleft()):
             count += 1
             if count > max_items:
@@ -165,6 +183,8 @@ def collect_track_uris(
             elif item.type in _FOLDER_TYPES and item.uri not in visited:
                 visited.add(item.uri)
                 queue.append(item.uri)
+
+        control.report(len(visited) - len(queue), len(visited))
 
     return uris
 

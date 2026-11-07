@@ -2,9 +2,26 @@
 
 ## 現状
 
-実機と通信するクライアントは**未実装**。インターフェース（`volumio.VolumioClient`）、モッククライアント、URI の照合、登録処理と履歴の保存までを実装し、モックでテストしている。画面の「Volumio に登録」もモッククライアントを使い、実機の Volumio は変更しない。
+| 機能 | 状況 |
+|---|---|
+| プレイリスト一覧の取得（REST API） | 実装済み。設定画面の「接続テスト」で使う |
+| ライブラリの曲の URI の取得（REST API） | 実装済み。取得した一覧は DB に保存し、PC のファイルとの照合に使う |
+| ファイルと URI の照合、登録前のプレビュー | 実装済み（実機の一覧・モックのどちらとも照合できる） |
+| プレイリストの作成・曲の追加（WebSocket API） | **未実装**。登録の流れはモッククライアントでのみ確認できる |
 
-AGENTS.md の方針（連携方式は実装前にユーザーと確認する）に従い、通信方式を決めてから実機クライアントを実装する。
+実機との通信は読み取りだけで、Volumio の状態を変更する API は呼ばない（`volumio_rest.py`）。
+テストは REST API を模擬するサーバーで行い、実機での確認は次のコマンドで明示的に実行する。
+
+```bash
+VPS_TEST_VOLUMIO_HOST=volumio.local uv run pytest -m integration tests/test_volumio_live.py --no-cov
+```
+
+## 実機での確認結果（2026-11-08、Volumio 3 系）
+
+利用中の Volumio（アップデート前の旧バージョン）で、PC のブラウザから次を確認した。Volumio 4 へのアップデート後に、同じ方法で改めて確認する。
+
+- `GET /api/v1/listplaylists` で、既存のプレイリスト名の配列が返る
+- `/socket.io/?EIO=3&transport=polling` と `/socket.io/?EIO=4&transport=polling` のどちらも、Engine.IO v3 のバイナリ形式（長さの前置きのあるペイロード）で `0{"sid":...,"upgrades":["websocket"],"pingInterval":25000,"pingTimeout":60000}` が返った。EIO=4 を指定しても v3 の形式で返り、`maxPayload` もないため、socket.io 2.x（Engine.IO v3）と判断した
 
 ## 公式資料の調査結果（2026-11 時点）
 
@@ -73,13 +90,10 @@ PC のブラウザで次の URL を開き、表示された内容を確認する
 1. `http://volumio.local/socket.io/?EIO=3&transport=polling` — `{"sid":...}` を含む応答なら socket.io 2.x と互換（案 A・B）
 2. `http://volumio.local/socket.io/?EIO=4&transport=polling` — 1 が「Unsupported protocol version」などのエラーで、2 が `0{"sid":...}` で始まる応答なら socket.io 3.x 以降（案 C）
 
-## ユーザーに確認したいこと
+## 未決定の事項
 
-1. 上記の URL の表示結果（Volumio 4 の socket.io のバージョンの判断材料）
-2. 案 A・B・C のどれで実装するか。案 A・C の場合は依存関係の追加の可否
-3. REST API の `browse` で URI 一覧を取得する部分（読み取りのみ）を先に実装してよいか
-4. ブラウザで `http://volumio.local/api/v1/listplaylists` を開いて、プレイリスト一覧が表示されるか
-5. 音楽ファイルの保存場所（microSD の内部ストレージ）が、Volumio の画面で `music-library/INTERNAL/...` として見えるか
+1. プレイリストの作成・曲の追加の方式（案 A・B・C）。現在の Volumio 3 系では案 A・B が対象。Volumio 4 へのアップデート後に socket.io のバージョンを確認してから決める
+2. 実機の曲の URI が、PC のファイルと一意に対応するか（「Volumio から曲の一覧を取得」した後のプレビューで確認できる）
 
 ## 実機での確認項目
 
