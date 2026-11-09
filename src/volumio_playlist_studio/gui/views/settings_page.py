@@ -29,15 +29,24 @@ def render(ctx: PageContext) -> None:
     """設定画面を表示する。"""
     st.title("設定")
 
-    st.subheader("音楽フォルダ")
-    st.caption(f"現在: {ctx.library_root or '未設定'}")
-    music_folder_form(ctx)
+    general, advanced, logs = st.tabs(["一般", "解析・AI", "ログ"])
+    with general:
+        st.subheader("音楽フォルダ")
+        st.caption(f"現在: {'サンプルデータ' if ctx.is_demo else ctx.library_root or '未設定'}")
+        music_folder_form(ctx)
+        _volumio_section(ctx)
+        _engine_section(ctx)
 
-    _volumio_section(ctx)
-    _jev_section(ctx)
-    _analysis_section(ctx)
-    _engine_section(ctx)
-    _log_section(ctx)
+    with advanced:
+        st.caption("解析・判定の調整用設定です。変更を反映するには各フォームで保存してください。")
+        with st.expander("Jev API の設定"):
+            _jev_section(ctx)
+
+        with st.expander("高度な音響解析設定"):
+            _analysis_section(ctx)
+
+    with logs:
+        _log_section(ctx)
 
 
 def _volumio_section(ctx: PageContext) -> None:

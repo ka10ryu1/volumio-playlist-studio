@@ -49,19 +49,27 @@ def render(ctx: PageContext) -> None:
 
     tracks = {t.id: t for t in list_tracks(ctx.conn, ctx.library_root)}
     labels = {k: v for k, v in load_labels(ctx.conn).items() if k in tracks}
-    _sample_section(ctx, list(tracks.values()), labels)
-    if labels:
-        _labeling_section(ctx, tracks, labels)
-        _metrics_section(ctx, labels)
-        _export_section(ctx, tracks, labels)
+    labeling, metrics, feedback = st.tabs(["評価入力", "集計・CSV", "プレイリスト"])
+    with labeling:
+        _sample_section(ctx, list(tracks.values()), labels)
+        if labels:
+            _labeling_section(ctx, tracks, labels)
 
-    _playlist_feedback_section(ctx)
+    with metrics:
+        if labels:
+            _metrics_section(ctx, labels)
+            _export_section(ctx, tracks, labels)
+        else:
+            st.info("「評価入力」で評価対象を追加すると、集計を確認できます。")
+
+    with feedback:
+        _playlist_feedback_section(ctx)
 
 
 def _sample_section(ctx: PageContext, tracks: list[Track], labels: dict[int, EvaluationLabel]) -> None:
     defaults = EvaluationDefaults()
     evaluated = sum(1 for lb in labels.values() if lb.is_evaluated)
-    st.write(f"評価対象: {len(labels)} 曲（評価済み {evaluated} 曲）")
+    st.write(f"評価対象: {len(labels)} 曲（評価済み {evaluated} 曲・未評価 {len(labels) - evaluated} 曲）")
     st.caption(
         "評価対象は「調整用」と「検証用」に半分ずつ分けます。ルールを調整するときは調整用だけを参照し、"
         "改善の確認は検証用の指標で行ってください（評価データへの過学習を防ぐため）。"
@@ -104,13 +112,15 @@ def _labeling_section(ctx: PageContext, tracks: dict[int, Track], labels: dict[i
     if track_id is None:
         return
 
+    st.caption("評価済み" if labels[track_id].is_evaluated else "未評価")
     stored = classifications.get(track_id)
     with st.container(border=True):
         st.markdown(f"**{track_label(tracks[track_id])}**")
         st.caption(
             f"アルバム: {tracks[track_id].album or '（不明）'}　ジャンルタグ: {tracks[track_id].genre or '（なし）'}"
         )
-        classification_details(None if stored is None else stored.result)
+        with st.expander("判定の詳細・属性スコア"):
+            classification_details(None if stored is None else stored.result)
 
     _label_form(ctx, labels[track_id], stored)
 
