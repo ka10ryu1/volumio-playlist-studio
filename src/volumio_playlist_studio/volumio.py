@@ -1,8 +1,8 @@
 """Volumio との連携のインターフェース、モック、楽曲 URI の照合、プレイリスト登録処理。
 
-実機との通信は、読み取り（プレイリスト一覧・ライブラリの参照）だけを REST API で実装している
-（volumio_rest.py）。プレイリストの作成・曲の追加は WebSocket（Socket.io）API にしかなく、
-方式が決まるまではモッククライアントで画面と処理の流れを確認する（docs/volumio.md）。
+実機との通信は、読み取り（プレイリスト一覧・ライブラリの参照）を REST API（volumio_rest.py）、
+プレイリストの作成・曲の追加を WebSocket（Socket.io）API（volumio_socketio.py）で行う。
+画面の登録は、実機での確認が済むまでモッククライアントで処理の流れを確認する（docs/volumio.md）。
 
 PC 上のファイルパスと Volumio 上の URI は、文字列の変換で対応付けない。Volumio のライブラリを
 参照して得た実際の URI の一覧と照合し、一意に対応する場合だけ登録に使う。
@@ -32,6 +32,26 @@ class VolumioError(Exception):
 
 class PlaylistExistsError(VolumioError):
     """同じ名前のプレイリストが既に Volumio にある場合の例外。既存のプレイリストは上書きしない。"""
+
+
+def validate_playlist_name(name: str) -> str:
+    """Volumio に登録するプレイリスト名を検証し、前後の空白を除いて返す。
+
+    Volumio 3 系はプレイリスト名をそのままファイル名に使う（`/data/playlist/<名前>`）。
+    別の場所のファイルを作成・変更させないよう、パスの区切りや制御文字を含む名前、`.` で始まる名前は使わない。
+
+    Raises:
+        ValueError: 名前が空、または使えない文字を含む場合。
+    """
+    name = name.strip()
+    if not name:
+        raise ValueError("playlist name must not be empty")
+
+    # 全角スペースなどの区切り文字は使えるよう、制御文字（Unicode の C で始まる分類）だけを拒否する
+    if name.startswith(".") or any(c in "/\\" or unicodedata.category(c).startswith("C") for c in name):
+        raise ValueError("playlist name contains characters that cannot be used")
+
+    return name
 
 
 @dataclass(frozen=True)
@@ -269,14 +289,11 @@ def register_playlist(client: VolumioClient, name: str, entries: list[tuple[int,
         entries: （楽曲 ID, URI）の並び。URI が対応しない曲は None。
 
     Raises:
-        ValueError: 名前が空、または登録できる曲が 1 曲もない場合。
+        ValueError: 名前が空か使えない文字を含む場合、または登録できる曲が 1 曲もない場合。
         PlaylistExistsError: 同じ名前のプレイリストが既にある場合。
         VolumioError: 既存のプレイリスト一覧を取得できない場合。
     """
-    name = name.strip()
-    if not name:
-        raise ValueError("playlist name must not be empty")
-
+    name = validate_playlist_name(name)
     if not any(uri for _, uri in entries):
         raise ValueError("no track has a matched Volumio URI")
 
