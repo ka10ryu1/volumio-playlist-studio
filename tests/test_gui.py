@@ -279,6 +279,7 @@ def test_playlist_feedback(demo: sqlite3.Connection) -> None:
     at = run_view("evaluation_page")
 
     next(s for s in at.slider if s.label.startswith("満足度")).set_value(5)
+    assert at.multiselect[0].placeholder == "合わなかった曲を選択"
     at.multiselect[0].select(0)
     click(at, "評価を保存")
 

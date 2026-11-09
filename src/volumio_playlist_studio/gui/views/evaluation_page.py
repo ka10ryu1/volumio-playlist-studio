@@ -315,6 +315,7 @@ def _playlist_feedback_section(ctx: PageContext) -> None:
             options,
             default=[i for i, e in enumerate(playlist.entries) if e.unsuitable],
             format_func=lambda i: f"{i + 1}. {_optional_track_label(tracks[i])}",
+            placeholder="合わなかった曲を選択",
         )
         if st.form_submit_button("評価を保存"):
             with transaction(ctx.conn):
