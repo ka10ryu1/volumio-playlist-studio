@@ -140,18 +140,34 @@ class SocketIOSession:
     def emit(self, event: str, data: object) -> None:
         """イベントを送信する。
 
+        送信に失敗した場合は接続を閉じる。
+
         Raises:
             VolumioError: 未接続、または送信に失敗した場合。
         """
         payload = json.dumps([event, data], ensure_ascii=False)
-        self._send(f"{_EIO_MESSAGE}{_SIO_EVENT}{payload}")
+        try:
+            self._send(f"{_EIO_MESSAGE}{_SIO_EVENT}{payload}")
+        except VolumioError:
+            self.close()
+            raise
 
     def wait_for(self, event: str, timeout: float) -> object:
         """指定した名前のイベントを受信するまで待ち、最初の引数を返す。
 
+        結果のイベントは名前でしか対応付けられないため、時間内に受信できないなど失敗した場合は接続を閉じる。
+        遅れて届いた前の操作の結果を、次の操作の結果と取り違えないようにするため。次の操作では接続し直す。
+
         Raises:
             VolumioError: 時間内に受信できない場合、接続が切れた場合、または未接続の場合。
         """
+        try:
+            return self._wait_for(event, timeout)
+        except VolumioError:
+            self.close()
+            raise
+
+    def _wait_for(self, event: str, timeout: float) -> object:
         deadline = time.monotonic() + timeout
         while True:
             received = self._receive_until(deadline)

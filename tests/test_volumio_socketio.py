@@ -69,6 +69,7 @@ class FakeSocketIO:
         playlists: プレイリスト名ごとの曲の URI。
         silent_uris: 追加しようとしても応答を返さない URI（Volumio 3 系で一覧の取得に失敗した場合の振る舞い）。
         failing_uris: success: false を返す URI。
+        delayed_uris: 指定した秒数だけ遅れて成功の結果を返す URI。
         ping_interval_ms: 接続時に通知する ping の間隔。
     """
 
@@ -78,6 +79,8 @@ class FakeSocketIO:
         self.playlists: dict[str, list[str]] = {}
         self.silent_uris: set[str] = set()
         self.failing_uris: set[str] = set()
+        self.delayed_uris: dict[str, float] = {}
+        self._send_lock = threading.Lock()
         self.refuse_namespace = False
         self.close_after_open = False
         self.open_packet: str | None = None
@@ -178,6 +181,13 @@ class FakeSocketIO:
             if data["uri"] in self.silent_uris:
                 return
 
+            if data["uri"] in self.delayed_uris:
+                result = {"uri": data["uri"], "service": "mpd", "favourite": False}
+                threading.Timer(
+                    self.delayed_uris[data["uri"]], self._emit_late, (conn, "pushAddToPlaylist", result)
+                ).start()
+                return
+
             if data["uri"] in self.failing_uris:
                 self._emit(conn, "pushAddToPlaylist", {"success": False})
                 return
@@ -189,8 +199,14 @@ class FakeSocketIO:
     def _emit(self, conn: socket.socket, event: str, data: object) -> None:
         self._send(conn, "42" + json.dumps([event, data], ensure_ascii=False))
 
+    def _emit_late(self, conn: socket.socket, event: str, data: object) -> None:
+        # クライアントが接続を閉じた後なら送れない。送れなかったことはテストのアサーションで確認する
+        with contextlib.suppress(OSError):
+            self._emit(conn, event, data)
+
     def _send(self, conn: socket.socket, packet: str) -> None:
-        _write_frame(conn, packet.encode())
+        with self._send_lock:
+            _write_frame(conn, packet.encode())
 
 
 @pytest.fixture(params=[True, False], ids=["socket.io-2", "socket.io-3+"])
@@ -254,6 +270,26 @@ def test_add_without_response_times_out(fake: FakeSocketIO) -> None:
         client.create_playlist("p")
         with pytest.raises(VolumioError, match="no response"):
             client.add_to_playlist("p", URI_B, "mpd")
+
+
+def test_late_response_is_not_taken_as_result_of_next_write(fake: FakeSocketIO) -> None:
+    # A の結果は待ち時間を過ぎてから届き、B には応答がない。
+    # 接続を使い続けると、遅れて届いた A の結果を B の成功と取り違える
+    fake.delayed_uris[URI_A] = 0.5
+    fake.silent_uris.add(URI_B)
+    with live_client(fake, response_timeout=0.3) as client:
+        client.create_playlist("p")
+        with pytest.raises(VolumioError, match="no response"):
+            client.add_to_playlist("p", URI_A, "mpd")
+
+        with pytest.raises(VolumioError, match="no response"):
+            client.add_to_playlist("p", URI_B, "mpd")
+
+        # 失敗のたびに接続を閉じ、次の操作では接続し直す
+        client.create_playlist("q")
+
+    assert len(fake.paths) == 3
+    assert fake.playlists == {"p": [], "q": []}
 
 
 def test_register_playlist_stops_at_unanswered_track(fake: FakeSocketIO) -> None:
