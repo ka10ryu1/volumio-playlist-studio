@@ -29,7 +29,7 @@
 
 ### 外部サービス
 
-- Volumio 実機とは、REST API による読み取りだけを実装している（`volumio_rest.py`）。プレイリスト作成・曲追加は WebSocket（Socket.io）API にしかなく、方式をユーザーと決めてから実装する（[docs/volumio.md](docs/volumio.md)）。Volumio の状態を変更する通信は、ユーザーの承認なしに追加しない
+- Volumio 実機とは、読み取りを REST API（`volumio_rest.py`）、プレイリストの作成・曲の追加を WebSocket（Socket.io）API（`volumio_socketio.py`）で行う。Socket.io は socket.io 2.x（Volumio 3）と 3.x 以降の両方に対応させている（[docs/volumio.md](docs/volumio.md)）。Volumio の状態を変更する通信は、ユーザーの承認なしに追加しない
 - Jev は公式 SDK（`typesafe-sdk`）を使う。テストでは `httpx2.MockTransport` で HTTP 層だけを差し替え、実 API とは通信しない
 - 実 API を使った検証は料金が発生するため、ユーザーの指示なしに実行しない
 

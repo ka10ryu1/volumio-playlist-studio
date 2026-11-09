@@ -150,7 +150,20 @@ def test_unmatched_tracks_are_skipped() -> None:
     ]
 
 
-@pytest.mark.parametrize(("name", "entries"), [("  ", [(1, URIS[0])]), ("名前", [(1, None)]), ("名前", [])])
+@pytest.mark.parametrize(
+    ("name", "entries"),
+    [
+        ("  ", [(1, URIS[0])]),
+        ("名前", [(1, None)]),
+        ("名前", []),
+        # Volumio 3 系はプレイリスト名をファイル名に使うため、別の場所を指す名前は登録しない
+        ("../設定", [(1, URIS[0])]),
+        ("a/b", [(1, URIS[0])]),
+        ("a\\b", [(1, URIS[0])]),
+        (".隠し", [(1, URIS[0])]),
+        ("タブ\t入り", [(1, URIS[0])]),
+    ],
+)
 def test_invalid_registration_is_rejected(name: str, entries: list[tuple[int, str | None]]) -> None:
     client = MockVolumioClient()
 
@@ -158,6 +171,16 @@ def test_invalid_registration_is_rejected(name: str, entries: list[tuple[int, st
         register_playlist(client, name, entries)
 
     assert client.playlists == {}
+
+
+@pytest.mark.parametrize("name", ["夜の曲 (2026)", "A.B", "曲名...", "ゲームサントラ（オススメ）", "夜の　曲"])
+def test_playlist_names_with_ordinary_symbols_are_accepted(name: str) -> None:
+    client = MockVolumioClient()
+
+    outcome = register_playlist(client, f" {name} ", [(1, URIS[0])])
+
+    assert outcome.status == "success"
+    assert client.playlists == {name: [URIS[0]]}
 
 
 def test_mock_rejects_unknown_playlist_and_service() -> None:

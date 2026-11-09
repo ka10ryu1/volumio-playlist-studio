@@ -173,7 +173,7 @@ def _register(
         st.error("同じ名前のプレイリストが既にあるため、登録しませんでした。")
         return
     except ValueError:
-        st.error("プレイリスト名が空か、登録できる曲がありません。")
+        st.error("プレイリスト名が空か使えない文字（/ や \\ など）を含むか、登録できる曲がありません。")
         return
     except VolumioError as exc:
         st.error(f"Volumio との通信に失敗しました: {exc}")
