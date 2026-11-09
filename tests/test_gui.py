@@ -456,8 +456,14 @@ def test_volumio_panel_previews_against_real_library(demo: sqlite3.Connection, f
 
     click(at, "Volumio から曲の一覧を取得")
     wait_for_jobs(at)
+    # まれに完了メッセージが表示されずに失敗するため、原因を切り分けられるよう失敗時の状態を残す
+    jobs: dict[str, BackgroundJob] = at.session_state["jobs"]
+    job_states = {name: (job.state, job.error, job.result) for name, job in jobs.items()}
     at.run()
-    assert any("6 曲の情報を取得しました" in s.value for s in at.success)
+    assert any("6 曲の情報を取得しました" in s.value for s in at.success), (
+        f"jobs={job_states} success={[s.value for s in at.success]} error={[e.value for e in at.error]} "
+        f"requests={len(fake_volumio.requests)}"
+    )
     # サンプルデータの曲は模擬した Volumio のライブラリにないため、すべて「対応なし」になる
     assert any("Volumio 上の URI と一意に対応しない" in w.value for w in at.warning)
     assert {method for method, _ in fake_volumio.requests} == {"GET"}
