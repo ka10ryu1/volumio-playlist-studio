@@ -47,8 +47,9 @@ from volumio_playlist_studio.storage.tracks import list_tracks
 logger = logging.getLogger(__name__)
 
 DEFAULT_OUTPUT_DIR = PROJECT_ROOT / "docs" / "images"
-# 参考にした画面キャプチャに合わせ、PC は幅 1180px、スマートフォンは幅 390px を 2 倍の解像度で撮る
-DESKTOP_VIEWPORT = ViewportSize(width=1180, height=900)
+# PC・タブレット縦向き・スマートフォンの幅で標準レイアウトを確認する。
+DESKTOP_VIEWPORT = ViewportSize(width=1280, height=900)
+TABLET_VIEWPORT = ViewportSize(width=768, height=1024)
 MOBILE_VIEWPORT = ViewportSize(width=390, height=844)
 DEVICE_SCALE_FACTOR = 2
 STARTUP_TIMEOUT_SEC = 60.0
@@ -177,6 +178,9 @@ def save_full_page(page: Page, path: Path) -> None:
     Streamlit はページ全体ではなく本文の要素がスクロールするため、`full_page` では見えている範囲しか撮れない。
     本文の高さに合わせてビューポートを広げてから撮り、元の大きさに戻す。
     """
+    # タブ切り替えや折りたたみの展開直後は、アニメーション完了後の高さで撮影する。
+    wait_for_app(page)
+    check_layout(page)
     viewport = page.viewport_size
     if viewport is None:
         raise RuntimeError("viewport size is not set")
@@ -191,6 +195,7 @@ def save_full_page(page: Page, path: Path) -> None:
 
 def save_viewport(page: Page, path: Path) -> None:
     """見えている範囲だけを撮る。"""
+    check_layout(page)
     page.screenshot(path=path)
     logger.info("screenshot saved: file=%s", path.name)
 
@@ -203,7 +208,9 @@ def open_page(page: Page, base_url: str, url_path: str) -> None:
 
 def fill_seed(page: Page) -> None:
     """選曲の seed を固定する。初期値は画面を開いた時刻で変わるため、撮り直しても同じ画像になるようにする。"""
+    page.get_by_text("詳細設定", exact=True).click()
     page.get_by_label("seed（同じ値なら同じ結果を再現します）").fill(str(PLAYLIST_SEED))
+    page.get_by_text("詳細設定", exact=True).click()
 
 
 def create_playlist(page: Page) -> None:
@@ -211,61 +218,144 @@ def create_playlist(page: Page) -> None:
     fill_seed(page)
     page.get_by_role("button", name="プレイリストを生成").click()
     wait_for_app(page)
-    page.get_by_label("プレイリスト名").fill(PLAYLIST_NAME)
-    page.get_by_label("プレイリスト名").press("Enter")
+    page.get_by_role("tab", name="3. 保存・連携").click()
+    page.get_by_label("プレイリスト名", exact=True).fill(PLAYLIST_NAME)
+    page.get_by_label("プレイリスト名", exact=True).press("Enter")
     wait_for_app(page)
     page.get_by_role("button", name="プレイリストを保存").click()
     wait_for_app(page)
 
 
+def check_layout(page: Page) -> None:
+    """本文全体の横あふれ・タイトルの折り返し・画面内の例外を検出する。表内のスクロールは許容する。"""
+    if page.locator("[data-testid='stException']").count():
+        raise RuntimeError("app rendered an exception")
+
+    layout = page.evaluate("""() => {
+        const main = document.querySelector('[data-testid="stMain"]');
+        const title = document.querySelector('h1');
+        const style = getComputedStyle(title);
+        return {width: main.clientWidth, scrollWidth: main.scrollWidth,
+                titleHeight: title.getBoundingClientRect().height
+                    - parseFloat(style.paddingTop) - parseFloat(style.paddingBottom),
+                titleLineHeight: parseFloat(style.lineHeight)};
+    }""")
+    if layout["scrollWidth"] > layout["width"]:
+        raise RuntimeError(f"page overflow: {layout}")
+
+    if layout["titleHeight"] > layout["titleLineHeight"] * 1.5:
+        raise RuntimeError(f"title wraps: {layout}")
+
+    logger.info("layout checked: width=%d scroll_width=%d", layout["width"], layout["scrollWidth"])
+
+
+def capture_pages(page: Page, base_url: str, output_dir: Path, suffix: str) -> None:
+    """各画面と、プレイリストの条件・編集・保存の状態を撮る。"""
+    for route, name in (
+        ("", "dashboard"),
+        ("library", "library"),
+        ("evaluation", "evaluation"),
+        ("settings", "settings"),
+    ):
+        open_page(page, base_url, route)
+        save_full_page(page, output_dir / f"{name}{suffix}.png")
+
+    open_page(page, base_url, "playlist")
+    save_full_page(page, output_dir / f"playlist-conditions{suffix}.png")
+    save_viewport(page, output_dir / ("playlist-top.png" if not suffix else f"playlist{suffix}.png"))
+    generate_button = page.get_by_role("button", name="プレイリストを生成").bounding_box()
+    viewport = page.viewport_size
+    if (
+        generate_button is None
+        or viewport is None
+        or generate_button["y"] + generate_button["height"] > viewport["height"]
+    ):
+        raise RuntimeError("generate button is outside the initial viewport")
+
+    create_playlist(page)
+    save_full_page(page, output_dir / f"playlist-save{suffix}.png")
+    page.get_by_role("tab", name="2. 曲を編集").click()
+    save_full_page(page, output_dir / ("playlist.png" if not suffix else f"playlist-edit{suffix}.png"))
+
+    if not suffix:
+        check_navigation_state(page)
+        open_page(page, base_url, "evaluation")
+        page.get_by_role("tab", name="集計・CSV").click()
+        save_full_page(page, output_dir / "evaluation-metrics.png")
+        page.get_by_role("tab", name="プレイリスト", exact=True).click()
+        save_full_page(page, output_dir / "evaluation-playlist.png")
+        open_page(page, base_url, "settings")
+        page.get_by_role("tab", name="解析・AI").click()
+        page.get_by_text("Jev API の設定", exact=True).click()
+        page.get_by_text("高度な音響解析設定", exact=True).click()
+        save_full_page(page, output_dir / "settings-advanced.png")
+
+
+def check_navigation_state(page: Page) -> None:
+    """同一セッションのページ移動で、保存名・条件・編集結果が維持されることを実ブラウザでも確認する。"""
+    page.get_by_role("button", name="除外", exact=True).click()
+    wait_for_app(page)
+    selection = page.get_by_test_id("stSelectbox").filter(has=page.get_by_text("編集する曲", exact=True))
+    before = selection.inner_text()
+    page.get_by_role("tab", name="3. 保存・連携").click()
+    page.get_by_label("プレイリスト名", exact=True).fill("移動後も保持する名前")
+    page.get_by_label("プレイリスト名", exact=True).press("Enter")
+    wait_for_app(page)
+    page.get_by_role("link", name="ダッシュボード").click()
+    wait_for_app(page)
+    page.get_by_role("button", name="プレイリストを作成").click()
+    wait_for_app(page)
+    if selection.inner_text() != before:
+        raise RuntimeError("playlist changed after navigation")
+
+    page.get_by_role("tab", name="3. 保存・連携").click()
+    if page.get_by_label("プレイリスト名", exact=True).input_value() != "移動後も保持する名前":
+        raise RuntimeError("playlist name was lost after navigation")
+
+    page.get_by_text("1. 選曲の条件", exact=True).click()
+    page.get_by_text("詳細設定", exact=True).click()
+    if page.get_by_label("seed（同じ値なら同じ結果を再現します）").input_value() != str(PLAYLIST_SEED):
+        raise RuntimeError("playlist seed was lost after navigation")
+
+
 def capture_desktop(browser: Browser, base_url: str, output_dir: Path) -> None:
     """PC の画面幅で各画面を撮る。"""
     context = browser.new_context(viewport=DESKTOP_VIEWPORT, device_scale_factor=DEVICE_SCALE_FACTOR, locale="ja-JP")
-    page = context.new_page()
     try:
-        # ダッシュボードは既定の画面のため、URL のパスは空になる
-        open_page(page, base_url, "")
-        save_full_page(page, output_dir / "dashboard.png")
-
-        open_page(page, base_url, "library")
-        save_full_page(page, output_dir / "library.png")
-
-        open_page(page, base_url, "playlist")
-        save_viewport(page, output_dir / "playlist-top.png")
-        create_playlist(page)
-        save_full_page(page, output_dir / "playlist.png")
-
-        open_page(page, base_url, "evaluation")
-        save_full_page(page, output_dir / "evaluation.png")
-
-        open_page(page, base_url, "settings")
-        save_full_page(page, output_dir / "settings.png")
+        capture_pages(context.new_page(), base_url, output_dir, "")
     finally:
         context.close()
 
 
-def capture_mobile(browser: Browser, base_url: str, output_dir: Path) -> None:
-    """スマートフォンの画面幅でプレイリスト作成画面を撮る。"""
-    context = browser.new_context(
-        viewport=MOBILE_VIEWPORT,
-        device_scale_factor=DEVICE_SCALE_FACTOR,
-        is_mobile=True,
-        has_touch=True,
-        locale="ja-JP",
-    )
-    page = context.new_page()
-    try:
-        open_page(page, base_url, "playlist")
-        fill_seed(page)
-        save_full_page(page, output_dir / "playlist-mobile.png")
-    finally:
-        context.close()
+def capture_mobile(browser: Browser, base_url: str, output_dir: Path, target: str = "all") -> None:
+    """スマートフォン・タブレットの画面幅で各画面を撮る。"""
+    for viewport, suffix in ((MOBILE_VIEWPORT, "-mobile"), (TABLET_VIEWPORT, "-tablet")):
+        if target != "all" and suffix != f"-{target}":
+            continue
+
+        context = browser.new_context(
+            viewport=viewport,
+            device_scale_factor=DEVICE_SCALE_FACTOR,
+            is_mobile=True,
+            has_touch=True,
+            locale="ja-JP",
+        )
+        try:
+            capture_pages(context.new_page(), base_url, output_dir, suffix)
+        finally:
+            context.close()
 
 
 def main(argv: list[str] | None = None) -> int:
     """デモデータで各画面を撮影する。"""
     parser = argparse.ArgumentParser(description="架空のデモデータで画面キャプチャを撮る")
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT_DIR, help="PNG の保存先")
+    parser.add_argument(
+        "--viewport",
+        choices=["all", "desktop", "mobile", "tablet"],
+        default="all",
+        help="撮影する画面幅（既定は全サイズ）",
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")
 
@@ -277,8 +367,11 @@ def main(argv: list[str] | None = None) -> int:
         with run_app(data_dir) as base_url, sync_playwright() as playwright:
             browser = playwright.chromium.launch()
             try:
-                capture_desktop(browser, base_url, output_dir)
-                capture_mobile(browser, base_url, output_dir)
+                if args.viewport in {"all", "desktop"}:
+                    capture_desktop(browser, base_url, output_dir)
+
+                if args.viewport != "desktop":
+                    capture_mobile(browser, base_url, output_dir, args.viewport)
             finally:
                 browser.close()
 
