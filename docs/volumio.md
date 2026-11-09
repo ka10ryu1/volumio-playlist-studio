@@ -7,14 +7,20 @@
 | プレイリスト一覧の取得（REST API） | 実装済み。設定画面の「接続テスト」で使う |
 | ライブラリの曲の URI の取得（REST API） | 実装済み。取得した一覧は DB に保存し、PC のファイルとの照合に使う |
 | ファイルと URI の照合、登録前のプレビュー | 実装済み（実機の一覧・モックのどちらとも照合できる） |
-| プレイリストの作成・曲の追加（WebSocket API） | **未実装**。登録の流れはモッククライアントでのみ確認できる |
+| プレイリストの作成・曲の追加（WebSocket API） | クライアントを実装済み（`volumio_socketio.py`）。画面からはまだ使っておらず、画面の登録はモッククライアントでのみ確認できる |
 
-実機との通信は読み取りだけで、Volumio の状態を変更する API は呼ばない（`volumio_rest.py`）。
-テストは REST API を模擬するサーバーで行い、実機での確認は次のコマンドで明示的に実行する。
+読み取りは REST API（`volumio_rest.py`）、プレイリストの作成・曲の追加は WebSocket API（`volumio_socketio.py` の `VolumioLiveClient`）で行う。
+テストは REST API と Socket.io を模擬するサーバーで行い、実機での確認は次のコマンドで明示的に実行する。
 
 ```bash
+# 読み取りだけを確認する
 VPS_TEST_VOLUMIO_HOST=volumio.local uv run pytest -m integration tests/test_volumio_live.py --no-cov
+# プレイリストの作成・曲の追加も確認する（`vps-test-日時` という名前のプレイリストを新しく作る）
+VPS_TEST_VOLUMIO_HOST=volumio.local VPS_TEST_VOLUMIO_WRITE=1 uv run pytest -m integration tests/test_volumio_live.py --no-cov --log-cli-level=INFO
 ```
+
+作成したプレイリストはテスト後も残る。内容と再生を Volumio の画面で確認してから、画面で削除する。
+判定した Socket.io のバージョンは、ログの `volumio socket.io connected: protocol=...` で確認できる。
 
 ## 実機での確認結果（2026-11-08、Volumio 3 系）
 
@@ -47,7 +53,14 @@ VPS_TEST_VOLUMIO_HOST=volumio.local uv run pytest -m integration tests/test_volu
 | `createPlaylist` | `{"name": "..."}` | `pushCreatePlaylist`（`{"success": bool, "reason": "..."}`） |
 | `addToPlaylist` | `{"name": "...", "service": "mpd", "uri": "..."}` | `pushAddToPlaylist` |
 
-結果のイベント名はドキュメントに記載がなく、volumio3-backend のソース（`app/plugins/user_interface/websocket/index.js`）で確認した。volumio3-backend は socket.io **2.x** を使っており、Python から接続するには socket.io 2.x と互換のクライアント（python-socketio の旧バージョンなど）が必要になる可能性が高い。Volumio 4 で同じかは未確認。
+結果のイベント名はドキュメントに記載がなく、volumio3-backend のソース（`app/plugins/user_interface/websocket/index.js`）で確認した。
+`app/playlistManager.js` から読み取れる、実装に関わる振る舞いは次のとおり。
+
+- `createPlaylist` は失敗時も例外にせず、`{"success": false, "reason": "Playlist already exists"}` などを返す
+- `addToPlaylist` の結果（`pushAddToPlaylist`）は、成功時はお気に入りかどうかの情報、保存の失敗時は `{"success": false}`。曲の一覧の取得に失敗した場合などは**応答が返らない**ため、待ち時間を区切って失敗として扱う
+- `addToPlaylist` は、存在しないプレイリスト名を指定すると空のプレイリストを作る。そのため、必ず `createPlaylist` で作成してから曲を追加する
+- プレイリスト名はそのままファイル名（`/data/playlist/<名前>`）に使われ、検証されない。`/`・`\`・制御文字を含む名前と `.` で始まる名前は、アプリ側で登録しない
+- 結果のイベントは、要求を送った接続にだけ返る。`pushListPlaylist` は作成・追加のたびに順不同で届くため、プレイリスト一覧の取得には使わず REST API で取得するvolumio3-backend は socket.io **2.x** を使っており、Python から接続するには socket.io 2.x と互換のクライアント（python-socketio の旧バージョンなど）が必要になる可能性が高い。Volumio 4 で同じかは未確認。
 
 ## URI の対応付け
 
@@ -81,6 +94,15 @@ PC 上のファイルパス（SMB 共有のマウント先からの相対パス�
 
 どちらの場合も、ライブラリの参照（URI 一覧の取得）は REST API で行い、書き込みだけを WebSocket で行う構成を想定している。Volumio 4 のバックエンドが socket.io 3.x 以降に更新されていれば、最新の python-socketio をそのまま使える（案 C）。
 
+**採用した方式（2026-11）**: 案 B。WebSocket の送受信には websocket-client を使い、Socket.io の部分（3 つのイベントに必要な範囲）を自前で実装した。Volumio 3 で検証してから 4 にアップデートする予定のため、socket.io 2.x と 3.x 以降の両方に対応させている。違いは次の 2 点で、接続直後にサーバーが名前空間への接続（`40`）を自分から送るかどうかで判定する。
+
+| | socket.io 2.x（Volumio 3） | socket.io 3.x 以降 |
+|---|---|---|
+| 名前空間への接続 | サーバーが自分から `40` を送る | クライアントが `40` を送り、サーバーが応答する |
+| 生存確認 | クライアントが ping（`2`）を送る | サーバーが ping を送り、クライアントが pong（`3`）を返す |
+
+接続の URL は `ws://<接続先>/socket.io/?EIO=4&transport=websocket`。socket.io 2.x のサーバーは EIO の指定によらず Engine.IO v3 で応答する（実機で確認済み）。
+
 なお、Volumio が内部で使っている MPD（音楽再生エンジン）のプロトコルでもプレイリストを作れるが、Volumio の画面のプレイリストは Volumio 独自の管理のため、作ったものが画面に表示されない可能性が高く、採用しない。
 
 ### Volumio 4 の socket.io のバージョンの確かめ方（未検証の手順）
@@ -92,7 +114,7 @@ PC のブラウザで次の URL を開き、表示された内容を確認する
 
 ## 未決定の事項
 
-1. プレイリストの作成・曲の追加の方式（案 A・B・C）。現在の Volumio 3 系では案 A・B が対象。Volumio 4 へのアップデート後に socket.io のバージョンを確認してから決める
+1. 画面から実機に登録する機能（登録はバックグラウンドで実行する）。クライアントの実機での確認後に実装する
 2. 実機の曲の URI が、PC のファイルと一意に対応するか（「Volumio から曲の一覧を取得」した後のプレビューで確認できる）
 
 ## 実機での確認項目
