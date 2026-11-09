@@ -54,20 +54,21 @@ def classification_details(result: ClassificationResult | None) -> None:
 
     model = f"（モデル: {result.model}）" if result.model else ""
     st.caption(f"{result.engine} / {result.engine_version}{model}")
-    confidence = "" if result.genre_confidence is None else f"（confidence {result.genre_confidence:.2f}）"
+    confidence = "" if result.genre_confidence is None else f"（確信度 {result.genre_confidence:.2f}）"
     st.write(f"ジャンル: **{genre_label(result.genre)}**{confidence}　ムード: **{mood_label(result.mood)}**")
     rows = []
     for attribute, score in result.attributes.items():
         rows.append(
             {
                 "属性": ATTRIBUTE_LABELS[attribute],
-                "スコア (0〜1)": score.value,
-                "confidence": score.confidence,
-                "状態": "判定保留" if score.is_held else "",
+                "スコア (0〜1)": "判定保留" if score.value is None else f"{score.value:.2f}",
+                "確信度": "対象外" if score.confidence is None else f"{score.confidence:.2f}",
+                "状態": "判定保留" if score.is_held else "判定済み",
             }
         )
 
     st.dataframe(rows, hide_index=True, width="stretch")
+    st.caption("確信度は AI の回答への確かさで、正解率ではありません。ルールベースでは対象外です。")
     for note in result.notes:
         st.caption(f"・{note}")
 

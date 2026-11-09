@@ -12,7 +12,7 @@ from streamlit.testing.v1 import AppTest
 from test_volumio_rest import FakeVolumio
 
 from volumio_playlist_studio.jobs import BackgroundJob
-from volumio_playlist_studio.models import ClassificationSource, Genre
+from volumio_playlist_studio.models import ClassificationSource, Genre, Mood
 from volumio_playlist_studio.playlist import GenreMode
 from volumio_playlist_studio.sample_data import DEMO_LIBRARY_ROOT, generate_sample_audio, load_demo_library
 from volumio_playlist_studio.scanner import scan_library
@@ -189,20 +189,20 @@ def test_jev_panel_shows_estimate_before_calling_api(
 
 def test_playlist_generation_edit_save_and_register(demo: sqlite3.Connection) -> None:
     at = run_view("playlist_page")
-    click(at, "選ぶ")  # 2 番目の雰囲気（集中・作業）を選ぶ
+    at.radio(key="pl_mood").set_value(Mood.FOCUS)
     click(at, "プレイリストを生成")
     assert any("曲・合計" in m.value for m in at.markdown)
 
-    first_before = at.markdown[next(i for i, m in enumerate(at.markdown) if m.value.startswith("1. "))].value
-    click(at, "↓")
-    first_after = next(m.value for m in at.markdown if m.value.startswith("1. "))
+    first_before = at.dataframe[0].value.iloc[0]["曲名"]
+    click(at, "下へ")
+    first_after = at.dataframe[0].value.iloc[0]["曲名"]
     assert first_after != first_before
-    count_before = sum(1 for b in at.button if b.label == "✕")
-    click(at, "✕")
-    assert sum(1 for b in at.button if b.label == "✕") == count_before - 1
-    at.selectbox[0].select_index(0).run()
+    count_before = len(at.dataframe[0].value)
+    click(at, "除外")
+    assert len(at.dataframe[0].value) == count_before - 1
+    next(s for s in at.selectbox if s.label == "追加する曲").select_index(0).run()
     click(at, "追加")
-    assert any("手動追加" in m.value for m in at.markdown)
+    assert "手動追加" in at.dataframe[1].value["適合度"].tolist()
 
     at.text_input(key="pl_name").input("テスト用プレイリスト").run()
     click(at, "プレイリストを保存")
@@ -279,6 +279,7 @@ def test_playlist_feedback(demo: sqlite3.Connection) -> None:
     at = run_view("evaluation_page")
 
     next(s for s in at.slider if s.label.startswith("満足度")).set_value(5)
+    assert at.multiselect[0].placeholder == "合わなかった曲を選択"
     at.multiselect[0].select(0)
     click(at, "評価を保存")
 
@@ -470,3 +471,156 @@ def test_volumio_panel_previews_against_real_library(demo: sqlite3.Connection, f
 
     next(r for r in at.radio if r.label == "照合先").set_value("モック（模擬）").run()
     assert any(b.label == "Volumio に登録" for b in at.button)
+
+
+def test_dashboard_navigates_to_playlist(demo: sqlite3.Connection) -> None:
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT).run()
+    click(at, "プレイリストを作成")
+    assert [t.value for t in at.title] == ["プレイリスト作成"]
+    click(at, "プレイリストを生成")
+    assert not next(e for e in at.expander if e.label == "1. 選曲の条件").proto.expanded
+    assert [t.label for t in at.tabs] == ["2. 曲を編集", "3. 保存・連携"]
+    assert len(at.dataframe[0].value) > 0
+
+
+def test_dashboard_navigates_to_library(demo: sqlite3.Connection) -> None:
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT).run()
+    click(at, "音楽ライブラリを開く")
+    assert [t.value for t in at.title] == ["音楽ライブラリ"]
+
+
+def test_playlist_conditions_survive_editing_and_save(demo: sqlite3.Connection) -> None:
+    at = run_view("playlist_page")
+    at.radio(key="pl_mood").set_value(Mood.OMAKASE)
+    at.radio(key="pl_length").set_value("曲数")
+    at.number_input(key="pl_count").set_value(5)
+    at.number_input(key="pl_seed").set_value(42)
+    at.slider(key="pl_novelty").set_value(0.7)
+    at.slider(key="pl_randomness").set_value(0.6)
+    at.checkbox(key="pl_smooth").uncheck()
+    click(at, "プレイリストを生成")
+    assert len(at.dataframe[0].value) == 5
+    original_titles = at.dataframe[0].value["曲名"].tolist()
+    click(at, "プレイリストを生成")
+    assert at.dataframe[0].value["曲名"].tolist() == original_titles
+    at.text_input(key="pl_name").input("編集中の名前").run()
+    click(at, "下へ")
+    assert at.text_input(key="pl_name").value == "編集中の名前"
+    assert at.number_input(key="pl_count").value == 5
+    assert at.radio(key="pl_mood").value == Mood.OMAKASE
+    assert at.slider(key="pl_novelty").value == 0.7
+    click(at, "プレイリストを保存")
+    [saved] = list_playlists(demo)
+    assert saved.seed == 42
+    assert saved.conditions["track_count"] == 5
+    assert saved.conditions["randomness"] == 0.6
+    assert saved.conditions["smooth_order"] is False
+    click(at, "除外")
+    assert any("未保存" in c.value for c in at.caption)
+    assert len(list_playlists(demo)[0].entries) == 5
+    # 保存後は既存仕様の利用回数が選曲に影響するため、曲順でなく入力条件の保持を確認する。
+    click(at, "プレイリストを生成")
+    assert len(at.dataframe[0].value) == 5
+    assert at.number_input(key="pl_seed").value == 42
+
+
+def test_playlist_empty_draft_can_be_restored(demo: sqlite3.Connection) -> None:
+    at = run_view("playlist_page")
+    at.radio(key="pl_length").set_value("曲数")
+    at.number_input(key="pl_count").set_value(1)
+    click(at, "プレイリストを生成")
+    assert next(b for b in at.button if b.label == "上へ").disabled
+    assert next(b for b in at.button if b.label == "下へ").disabled
+    click(at, "除外")
+    assert any("曲がありません" in i.value for i in at.info)
+    assert next(b for b in at.button if b.label == "プレイリストを保存").disabled
+    next(s for s in at.selectbox if s.label == "追加する曲").select_index(0).run()
+    click(at, "追加")
+    assert len(at.dataframe[0].value) == 1
+    assert not next(b for b in at.button if b.label == "プレイリストを保存").disabled
+
+
+def test_library_filters_and_empty_results(demo: sqlite3.Connection) -> None:
+    at = run_view("library")
+    next(s for s in at.selectbox if s.label == "解析状況").select("未解析").run()
+    assert any("条件に合う曲がありません" in i.value for i in at.info)
+    next(s for s in at.selectbox if s.label == "解析状況").select("解析済み").run()
+    next(s for s in at.selectbox if s.label == "判定ジャンルで絞り込み").select("ジャズ").run()
+    rows = at.dataframe[0].value
+    assert len(rows) > 0
+    assert set(rows["判定ジャンル"]) == {"ジャズ"}
+    assert set(rows["解析"]) == {"解析済み"}
+    assert next(e for e in at.expander if e.label == "音響特徴量・判定の詳細").proto.expanded is False
+
+
+def test_classification_details_do_not_show_none(demo: sqlite3.Connection) -> None:
+    at = run_view("library")
+    details = next(d.value for d in at.dataframe if "確信度" in d.value.columns)
+    assert set(details["確信度"]) == {"対象外"}
+    assert "判定保留" in details["スコア (0〜1)"].tolist()
+    assert not details.isna().any().any()
+
+
+def test_changing_conditions_does_not_replace_draft(demo: sqlite3.Connection) -> None:
+    at = run_view("playlist_page")
+    click(at, "プレイリストを生成")
+    before = at.dataframe[0].value["曲名"].tolist()
+    at.radio(key="pl_mood").set_value(Mood.FOCUS).run()
+    at.radio(key="pl_length").set_value("曲数").run()
+    at.number_input(key="pl_count").set_value(3).run()
+    assert at.dataframe[0].value["曲名"].tolist() == before
+    click(at, "下へ")
+    assert at.dataframe[0].value["曲名"].tolist()[:2] == [before[1], before[0]]
+    assert at.number_input(key="pl_count").value == 3
+    assert at.radio(key="pl_mood").value == Mood.FOCUS
+    # 移動後も同じ曲を選択したまま、続けて移動できる。
+    click(at, "下へ")
+    assert at.dataframe[0].value.iloc[2]["曲名"] == before[0]
+    click(at, "プレイリストを生成")
+    assert len(at.dataframe[0].value) == 3
+
+
+def playlist_navigation_script() -> None:
+    """AppTest が直接操作できないサイドバーの代わりにボタンで標準ページ遷移を行う。"""
+    import streamlit as st
+
+    from volumio_playlist_studio.gui.context import open_context
+    from volumio_playlist_studio.gui.views import playlist_page
+
+    ctx = open_context()
+    try:
+
+        def edit() -> None:
+            playlist_page.render(ctx)
+            if st.button("別画面へ"):
+                st.switch_page(other_page)
+
+        def other() -> None:
+            if st.button("編集へ戻る"):
+                st.switch_page(edit_page)
+
+        edit_page = st.Page(edit, title="編集", url_path="edit", default=True)
+        other_page = st.Page(other, title="別画面", url_path="other")
+        playlist_page.preserve_inputs()
+        st.navigation([edit_page, other_page]).run()
+    finally:
+        ctx.conn.close()
+
+
+def test_playlist_round_trip_keeps_unsaved_inputs_and_draft(demo: sqlite3.Connection) -> None:
+    at = AppTest.from_function(playlist_navigation_script, default_timeout=TIMEOUT).run()
+    click(at, "プレイリストを生成")
+    click(at, "除外")
+    before = at.dataframe[0].value["曲名"].tolist()
+    at.text_input(key="pl_name").input("戻って編集する名前").run()
+    at.radio(key="pl_mood").set_value(Mood.FOCUS).run()
+    at.number_input(key="pl_count").set_value(7).run()
+    at.number_input(key="pl_seed").set_value(2024).run()
+    click(at, "別画面へ")
+    assert not at.dataframe
+    click(at, "編集へ戻る")
+    assert at.text_input(key="pl_name").value == "戻って編集する名前"
+    assert at.radio(key="pl_mood").value == Mood.FOCUS
+    assert at.number_input(key="pl_count").value == 7
+    assert at.number_input(key="pl_seed").value == 2024
+    assert at.dataframe[0].value["曲名"].tolist() == before

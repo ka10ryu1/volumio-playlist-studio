@@ -7,3 +7,14 @@ headless = true
 [browser]
 # Streamlit への利用統計の送信を無効にする
 gatherUsageStats = false
+
+# 標準テーマで見出しと色を統一する。390px 幅でもページ名を一行で読める大きさにする。
+[theme]
+base = "light"
+primaryColor = "#c7354f"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f7f7f8"
+textColor = "#262730"
+font = "sans-serif"
+headingFontSizes = ["1.75rem", "1.4rem", "1.2rem", "1.1rem", "1rem", "1rem"]
+baseRadius = "0.5rem"

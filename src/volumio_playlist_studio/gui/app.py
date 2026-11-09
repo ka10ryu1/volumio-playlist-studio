@@ -21,9 +21,18 @@ def main() -> None:
         if lan is not None and not require_pin(lan, remote_ip):
             return
 
+        playlist_page.preserve_inputs()
         pages = [
             st.Page(
-                lambda: dashboard.render(ctx), title="ダッシュボード", icon="📊", url_path="dashboard", default=True
+                lambda: dashboard.render(
+                    ctx,
+                    on_playlist=lambda: st.switch_page(pages[2]),
+                    on_library=lambda: st.switch_page(pages[1]),
+                ),
+                title="ダッシュボード",
+                icon="📊",
+                url_path="dashboard",
+                default=True,
             ),
             st.Page(lambda: library.render(ctx), title="音楽ライブラリ", icon="🎼", url_path="library"),
             st.Page(lambda: playlist_page.render(ctx), title="プレイリスト作成", icon="🎧", url_path="playlist"),
