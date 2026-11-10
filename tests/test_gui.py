@@ -250,6 +250,17 @@ def test_playlist_shortfall_offers_relaxation(demo: sqlite3.Connection) -> None:
     assert any("条件を緩和" in m.value for m in at.markdown)
 
 
+def test_playlist_offers_ten_moods_and_suggests_jev_for_morning(demo: sqlite3.Connection) -> None:
+    at = run_view("playlist_page")
+    assert len(at.radio(key="pl_mood").options) == 11  # 10 種類の雰囲気と「おまかせ」
+
+    # デモデータはルールベースの判定だけで明るさが判定保留のため、朝・爽やかの候補がない
+    at.radio(key="pl_mood").set_value(Mood.MORNING)
+    click(at, "プレイリストを生成")
+
+    assert any("条件に合う曲が足りません" in w.value and "Jev で判定する" in w.value for w in at.warning)
+
+
 def test_playlist_requires_genres_when_filtering(demo: sqlite3.Connection) -> None:
     at = run_view("playlist_page")
     next(r for r in at.radio if r.label == "ジャンル").set_value(GenreMode.ONLY)
@@ -267,6 +278,9 @@ def test_evaluation_flow(demo: sqlite3.Connection) -> None:
     next(r for r in at.radio if r.label == "ジャンルの判定は").set_value(Verdict.INCORRECT)
     next(s for s in at.selectbox if s.label == "誤りの場合、正しいジャンル").set_value(Genre.WORLD)
     next(r for r in at.radio if r.label == "ムードの判定は").set_value(Verdict.PENDING)
+    # 正しいムードの候補は、分類結果に現れるムードだけ（プレイリスト専用の雰囲気は含めない）
+    mood_options = next(s for s in at.selectbox if s.label == "誤りの場合、正しいムード").options
+    assert mood_options == ["リラックス", "集中・作業", "元気", "穏やかな夜"]
     at.select_slider[0].set_value(4)
     click(at, "評価を保存")
     labels = [lb for lb in load_labels(demo).values() if lb.is_evaluated]

@@ -43,7 +43,8 @@ class Classifier(Protocol):
         ...
 
 
-# ムードごとに、その適合度を表す属性。複数ある場合は平均する
+# 分類結果のムードの候補と、その適合度を表す属性。複数ある場合は平均する。
+# プレイリスト生成でだけ選べる雰囲気（Mood の残り）はここに含めない
 MOOD_COMPONENTS: dict[Mood, tuple[Attribute, ...]] = {
     Mood.RELAX: (Attribute.RELAXATION,),
     Mood.FOCUS: (Attribute.WORK_BGM,),

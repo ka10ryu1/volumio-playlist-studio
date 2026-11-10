@@ -36,6 +36,13 @@ _MOOD_PROFILES: dict[Mood, tuple[tuple[Attribute, float, float], ...]] = {
     Mood.FOCUS: ((Attribute.WORK_BGM, 2.0, 1.0), (Attribute.ENERGY, 1.0, 0.4), (Attribute.CALMNESS, 1.0, 0.7)),
     Mood.ENERGETIC: ((Attribute.ENERGY, 2.0, 1.0), (Attribute.PARTY, 1.0, 1.0), (Attribute.BRIGHTNESS, 1.0, 0.8)),
     Mood.CALM_NIGHT: ((Attribute.NIGHT_BGM, 2.0, 1.0), (Attribute.ENERGY, 1.0, 0.15), (Attribute.CALMNESS, 1.0, 1.0)),
+    # 明るさが主属性の雰囲気は、明るさを判定しないルールベースの結果では候補が出ない
+    Mood.MORNING: ((Attribute.BRIGHTNESS, 2.0, 1.0), (Attribute.ENERGY, 1.0, 0.55), (Attribute.CALMNESS, 1.0, 0.6)),
+    Mood.CAFE: ((Attribute.RELAXATION, 2.0, 0.7), (Attribute.ENERGY, 1.0, 0.4), (Attribute.BRIGHTNESS, 1.0, 0.7)),
+    Mood.DRIVE: ((Attribute.ENERGY, 2.0, 0.7), (Attribute.BRIGHTNESS, 1.0, 0.7), (Attribute.PARTY, 1.0, 0.6)),
+    Mood.WORKOUT: ((Attribute.PARTY, 2.0, 1.0), (Attribute.ENERGY, 2.0, 1.0), (Attribute.RELAXATION, 1.0, 0.0)),
+    Mood.MELLOW: ((Attribute.BRIGHTNESS, 2.0, 0.0), (Attribute.ENERGY, 1.0, 0.3), (Attribute.CALMNESS, 1.0, 0.8)),
+    Mood.SLEEP: ((Attribute.CALMNESS, 2.0, 1.0), (Attribute.ENERGY, 1.5, 0.0), (Attribute.RELAXATION, 1.0, 1.0)),
 }
 # 「おまかせ」では雰囲気で絞り込まず、全曲を同じ適合度として扱う
 _OMAKASE_SUITABILITY = 0.6
@@ -47,7 +54,7 @@ _FAMILIAR_USAGE = 3
 # 曲順を決めるとき、判定保留の属性はこの値とみなす
 _NEUTRAL_VALUE = 0.5
 # 最後に向けて落ち着かせる雰囲気
-_WIND_DOWN_MOODS = frozenset({Mood.RELAX, Mood.CALM_NIGHT})
+_WIND_DOWN_MOODS = frozenset({Mood.RELAX, Mood.CALM_NIGHT, Mood.SLEEP})
 
 REASON_UNCLASSIFIED = "判定保留・未分類"
 REASON_UNSUITABLE = "雰囲気に合わない"
@@ -205,6 +212,12 @@ def suitability(classification: ClassificationResult | None, mood: Mood) -> floa
     return weighted / total_weight
 
 
+def _primary_attribute(mood: Mood) -> Attribute | None:
+    """雰囲気の主属性。「おまかせ」は None。"""
+    profile = _MOOD_PROFILES.get(mood)
+    return None if profile is None else profile[0][0]
+
+
 def duplicate_key(track: Track) -> str:
     """同じ曲とみなすためのキー。曲名とアーティストが分かればそれを、なければファイル内容のハッシュを使う。"""
     if track.title and track.artist:
@@ -352,7 +365,7 @@ def _smooth_order(tracks: list[SelectedTrack], mood: Mood) -> list[SelectedTrack
     """エネルギー感とリラックス度が急に変わらないよう、近い曲を順につなぐ。
 
     エネルギー感が最も低い曲から始めて、まだ使っていない最も近い曲を次に選ぶ（最近傍法）。
-    これにより全体としてエネルギー感が徐々に上がる並びになる。リラックス・穏やかな夜では逆順にし、
+    これにより全体としてエネルギー感が徐々に上がる並びになる。リラックス・穏やかな夜・入眠では逆順にし、
     終盤に向けて落ち着いていく並びにする。
     """
     if len(tracks) <= 1:
@@ -435,6 +448,10 @@ def _shortfall(
 
     if excluded[REASON_UNCLASSIFIED]:
         suggestions.append("未解析・未判定の曲を解析または判定する")
+        if _primary_attribute(request.mood) == Attribute.BRIGHTNESS:
+            suggestions.append(
+                "Jev で判定する（ルールベースは曲調の明るさを判定しないため、この雰囲気の候補にならない）"
+            )
 
     if unit == "seconds":
         suggestions.append("再生時間を短くする")

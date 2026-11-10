@@ -2,6 +2,7 @@
 
 import streamlit as st
 
+from volumio_playlist_studio.classify.base import MOOD_COMPONENTS
 from volumio_playlist_studio.classify.jev import ENGINE_NAME as JEV_ENGINE
 from volumio_playlist_studio.classify.rules import ENGINE_NAME as RULES_ENGINE
 from volumio_playlist_studio.config import RATING_MAX, RATING_MIN, EvaluationDefaults
@@ -37,7 +38,8 @@ _VERDICT_LABELS = {
     Verdict.PENDING: "判定保留（人でも判断できない）",
 }
 _SPLIT_LABELS = {Split.TUNING: "調整用", Split.HOLDOUT: "検証用"}
-_MOODS = [m for m in Mood if m != Mood.OMAKASE]
+# 分類結果に現れるムードだけを正解の候補にする
+_MOODS = list(MOOD_COMPONENTS)
 
 
 def render(ctx: PageContext) -> None:
