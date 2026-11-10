@@ -1,5 +1,6 @@
-"""プレイリスト作成画面。条件を指定して生成し、編集・保存・Volumio 登録のプレビューを行う。"""
+"""プレイリスト作成画面。条件を指定した生成、編集・保存・Volumio 登録のプレビュー、保存済みの削除を行う。"""
 
+import logging
 from dataclasses import replace
 from datetime import datetime
 
@@ -25,13 +26,23 @@ from volumio_playlist_studio.playlist import (
     total_duration,
 )
 from volumio_playlist_studio.storage.database import transaction
-from volumio_playlist_studio.storage.playlists import PlaylistDraft, PlaylistEntry, save_playlist
+from volumio_playlist_studio.storage.playlists import (
+    PlaylistDraft,
+    PlaylistEntry,
+    SavedPlaylist,
+    delete_playlist,
+    list_playlists,
+    save_playlist,
+)
+
+logger = logging.getLogger(__name__)
 
 _MOOD_KEY = "pl_mood"
 _RESULT_KEY = "pl_result"
 _DRAFT_KEY = "pl_draft"
 _SAVED_KEY = "pl_saved_id"
 _SAVED_NAME_KEY = "pl_saved_name"
+_DELETED_NAME_KEY = "pl_deleted_name"
 _SEED_KEY = "pl_seed"
 _MAX_SEED = 1_000_000
 _SECONDS_PER_MINUTE = 60
@@ -84,17 +95,17 @@ def render(ctx: PageContext) -> None:
         st.rerun()
 
     result: GenerationResult | None = st.session_state.get(_RESULT_KEY)
-    if result is None:
-        return
+    if result is not None:
+        edit_tab, save_tab = st.tabs(["2. 曲を編集", "3. 保存・連携"])
+        with edit_tab:
+            _shortfall_notice(candidates, result, defaults)
+            _draft_editor(candidates, result)
 
-    edit_tab, save_tab = st.tabs(["2. 曲を編集", "3. 保存・連携"])
-    with edit_tab:
-        _shortfall_notice(candidates, result, defaults)
-        _draft_editor(candidates, result)
+        with save_tab:
+            _save_section(ctx, result)
+            volumio_panel.render(ctx, st.session_state.get(_SAVED_KEY))
 
-    with save_tab:
-        _save_section(ctx, result)
-        volumio_panel.render(ctx, st.session_state.get(_SAVED_KEY))
+    _saved_playlists_section(ctx)
 
 
 def _conditions_panel(defaults: PlaylistDefaults, ctx: PageContext) -> PlaylistRequest | None:
@@ -322,6 +333,55 @@ def _save_section(ctx: PageContext, result: GenerationResult) -> None:
         st.caption("保存済みです。Volumio との照合・登録は下の欄で行えます。")
     else:
         st.caption("編集中の内容は未保存です。曲を変更したら、もう一度保存してください。")
+
+
+def _saved_playlists_section(ctx: PageContext) -> None:
+    """保存済みのプレイリストを削除する欄。生成前でも操作できるよう、結果の有無によらず表示する。"""
+    deleted_name: str | None = st.session_state.pop(_DELETED_NAME_KEY, None)
+    playlists = list_playlists(ctx.conn)
+    if not playlists and deleted_name is None:
+        return
+
+    with st.expander("保存済みのプレイリスト", expanded=deleted_name is not None):
+        if deleted_name is not None:
+            st.success(f"「{deleted_name}」を削除しました。")
+
+        if not playlists:
+            st.caption("保存したプレイリストがありません。")
+            return
+
+        playlist = st.selectbox(
+            "プレイリスト", playlists, format_func=lambda p: f"{p.name}（{p.created_at}）", key="pl_manage"
+        )
+        if playlist is None:
+            return
+
+        st.caption(f"{len(playlist.entries)} 曲・合計 {format_duration(playlist.total_duration_sec)}")
+        st.caption(
+            "削除すると、このアプリの一覧に表示されなくなります。満足度などの評価は精度評価の集計に残ります。"
+            "Volumio に登録したプレイリストは削除しません（Volumio の画面で削除してください）。"
+        )
+        confirmed = st.checkbox("このプレイリストを削除します", key=f"pl-delete-confirm-{playlist.id}")
+        if st.button("プレイリストを削除", disabled=not confirmed, key=f"pl-delete-{playlist.id}"):
+            _delete(ctx, playlist)
+
+
+def _delete(ctx: PageContext, playlist: SavedPlaylist) -> None:
+    try:
+        with transaction(ctx.conn):
+            delete_playlist(ctx.conn, playlist.id)
+    except ValueError:
+        # 別のタブなどで先に削除された場合。一覧を読み直して表示を合わせる
+        logger.warning("playlist_delete_skipped: playlist_id=%d reason=not_found_or_deleted", playlist.id)
+        st.error("このプレイリストは既に削除されています。")
+        return
+
+    logger.info("playlist_deleted: playlist_id=%d", playlist.id)
+    if st.session_state.get(_SAVED_KEY) == playlist.id:
+        st.session_state.pop(_SAVED_KEY, None)
+
+    st.session_state[_DELETED_NAME_KEY] = playlist.name
+    st.rerun()
 
 
 def _update_draft(draft: list[SelectedTrack]) -> None:

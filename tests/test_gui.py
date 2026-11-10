@@ -21,7 +21,7 @@ from volumio_playlist_studio.scanner import scan_library
 from volumio_playlist_studio.storage import settings_store
 from volumio_playlist_studio.storage.database import connect, transaction
 from volumio_playlist_studio.storage.evaluations import Verdict, load_labels
-from volumio_playlist_studio.storage.playlists import list_playlists, list_registrations
+from volumio_playlist_studio.storage.playlists import list_playlists, list_registrations, set_feedback
 from volumio_playlist_studio.storage.tracks import list_tracks
 from volumio_playlist_studio.storage.volumio_library import replace_uris
 
@@ -302,6 +302,34 @@ def test_playlist_feedback(demo: sqlite3.Connection) -> None:
     [saved] = list_playlists(demo)
     assert saved.satisfaction == 5
     assert saved.entries[0].unsuitable
+
+
+def test_saved_playlist_can_be_deleted_keeping_feedback(demo: sqlite3.Connection) -> None:
+    at = run_view("playlist_page")
+    click(at, "プレイリストを生成")
+    at.text_input(key="pl_name").input("消すプレイリスト").run()
+    click(at, "プレイリストを保存")
+    [saved] = list_playlists(demo)
+    with transaction(demo):
+        set_feedback(demo, saved.id, 2, {0})
+
+    # 生成前の画面（再表示）からも削除できる。確認のチェックを入れるまでは押せない
+    at = run_view("playlist_page")
+    assert next(b for b in at.button if b.label == "プレイリストを削除").disabled
+    next(c for c in at.checkbox if c.label == "このプレイリストを削除します").check().run()
+    click(at, "プレイリストを削除")
+
+    assert any("「消すプレイリスト」を削除しました" in s.value for s in at.success)
+    assert not any(b.label == "プレイリストを削除" for b in at.button)
+    assert list_playlists(demo) == []
+    [deleted] = list_playlists(demo, include_deleted=True)
+    assert (deleted.satisfaction, deleted.entries[0].unsuitable) == (2, True)
+
+    at = run_view("evaluation_page")
+    assert any("保存したプレイリストがありません" in c.value for c in at.caption)
+    table = next(d.value for d in at.dataframe if "平均満足度" in d.value.columns)
+    assert table.iloc[0]["プレイリスト数"] == 1
+    assert table.iloc[0]["平均満足度"] == "2.0"
 
 
 def test_settings_view_saves_values(demo: sqlite3.Connection) -> None:

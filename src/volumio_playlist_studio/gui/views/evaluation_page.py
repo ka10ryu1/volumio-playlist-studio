@@ -27,7 +27,7 @@ from volumio_playlist_studio.storage.evaluations import (
     load_labels,
     save_label,
 )
-from volumio_playlist_studio.storage.playlists import list_playlists, set_feedback
+from volumio_playlist_studio.storage.playlists import SavedPlaylist, list_playlists, set_feedback
 from volumio_playlist_studio.storage.tracks import get_track, list_tracks
 
 _ENGINE_LABELS = {RULES_ENGINE: "ルールベース（Baseline）", JEV_ENGINE: "Jev"}
@@ -298,10 +298,31 @@ def _optional_track_label(track: Track | None) -> str:
 def _playlist_feedback_section(ctx: PageContext) -> None:
     st.subheader("プレイリストの評価")
     playlists = list_playlists(ctx.conn)
-    if not playlists:
+    if playlists:
+        _playlist_feedback_form(ctx, playlists)
+    else:
         st.caption("保存したプレイリストがありません。")
-        return
 
+    # 削除したプレイリストの評価も、選曲の改善に使うため集計に含める
+    feedback = playlist_feedback_metrics(list_playlists(ctx.conn, include_deleted=True))
+    if feedback:
+        st.dataframe(
+            [
+                {
+                    "分類結果": f.source,
+                    "プレイリスト数": f.playlists,
+                    "不適切な曲の割合": _ratio(f.unsuitable_rate),
+                    "平均満足度": "-" if f.mean_satisfaction is None else f"{f.mean_satisfaction:.1f}",
+                }
+                for f in feedback
+            ],
+            hide_index=True,
+            width="stretch",
+        )
+        st.caption("削除したプレイリストの評価も集計に含めています。")
+
+
+def _playlist_feedback_form(ctx: PageContext, playlists: list[SavedPlaylist]) -> None:
     playlist = st.selectbox("プレイリスト", playlists, format_func=lambda p: f"{p.name}（{p.created_at}）")
     if playlist is None:
         return
@@ -323,19 +344,3 @@ def _playlist_feedback_section(ctx: PageContext) -> None:
 
             st.success("プレイリストの評価を保存しました。")
             st.rerun()
-
-    feedback = playlist_feedback_metrics(playlists)
-    if feedback:
-        st.dataframe(
-            [
-                {
-                    "分類結果": f.source,
-                    "プレイリスト数": f.playlists,
-                    "不適切な曲の割合": _ratio(f.unsuitable_rate),
-                    "平均満足度": "-" if f.mean_satisfaction is None else f"{f.mean_satisfaction:.1f}",
-                }
-                for f in feedback
-            ],
-            hide_index=True,
-            width="stretch",
-        )
