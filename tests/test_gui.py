@@ -9,6 +9,7 @@ from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from streamlit.proto.SelectWidgetFilterMode_pb2 import SelectWidgetFilterMode
 from streamlit.testing.v1 import AppTest
 from test_volumio_rest import FakeVolumio
 from test_volumio_socketio import FakeSocketIO
@@ -344,6 +345,40 @@ def test_saved_playlist_can_be_deleted_keeping_feedback(demo: sqlite3.Connection
     table = next(d.value for d in at.dataframe if "平均満足度" in d.value.columns)
     assert table.iloc[0]["プレイリスト数"] == 1
     assert table.iloc[0]["平均満足度"] == "2.0"
+
+
+def test_select_widgets_do_not_accept_typing_except_track_search(demo: sqlite3.Connection) -> None:
+    """選択欄は文字入力を受け付けない（スマートフォンでソフトウェアキーボードを出さない）。
+
+    曲名で検索して選ぶ「追加する曲」だけは文字入力を受け付ける。
+    """
+    at = run_view("playlist_page")
+    click(at, "プレイリストを生成")
+    click(at, "プレイリストを保存")
+    screens = [at, run_view("library"), run_view("settings_page")]
+    at = run_view("evaluation_page")
+    click(at, "無作為に選んで追加")
+    screens.append(at)
+
+    widgets = [w for screen in screens for w in [*screen.selectbox, *screen.multiselect]]
+    typable = [w.label for w in widgets if w.proto.filter_mode != SelectWidgetFilterMode.FILTER_MODE_NONE]
+
+    assert typable == ["追加する曲"]
+    assert [w.label for w in widgets].count("プレイリスト") == 2
+    assert {w.label for w in widgets} >= {
+        "ジャンルを選ぶ（全ジャンル以外の場合）",
+        "編集する曲",
+        "プレイリスト",
+        "登録するプレイリスト",
+        "解析状況",
+        "判定ジャンルで絞り込み",
+        "詳細を表示する曲",
+        "サンプリング周波数（Hz）",
+        "曲",
+        "誤りの場合、正しいジャンル",
+        "誤りの場合、正しいムード",
+        "雰囲気に合わなかった曲",
+    }
 
 
 def test_settings_view_saves_values(demo: sqlite3.Connection) -> None:

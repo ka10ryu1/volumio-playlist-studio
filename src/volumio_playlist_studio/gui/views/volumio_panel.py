@@ -65,7 +65,10 @@ def render(ctx: PageContext, saved_playlist_id: int | None) -> None:
     with st.expander("Volumio に登録", expanded=saved_playlist_id is not None):
         ids = [p.id for p in playlists]
         default = ids.index(saved_playlist_id) if saved_playlist_id in ids else 0
-        playlist = st.selectbox("登録するプレイリスト", playlists, index=default, format_func=lambda p: p.name)
+        # 一覧から選ぶだけなので文字入力を受け付けず、スマートフォンでキーボードを出さない
+        playlist = st.selectbox(
+            "登録するプレイリスト", playlists, index=default, format_func=lambda p: p.name, filter_mode=None
+        )
         if playlist is None:
             return
 

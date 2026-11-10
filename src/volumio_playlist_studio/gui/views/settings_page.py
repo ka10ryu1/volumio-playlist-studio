@@ -155,6 +155,8 @@ def _analysis_section(ctx: PageContext) -> None:
             "サンプリング周波数（Hz）",
             _SAMPLE_RATES,
             index=_SAMPLE_RATES.index(params.sample_rate) if params.sample_rate in _SAMPLE_RATES else 1,
+            # 一覧から選ぶだけなので文字入力を受け付けず、スマートフォンでキーボードを出さない
+            filter_mode=None,
         )
         silence = st.number_input("無音とみなす音量（dBFS）", -120.0, -1.0, params.silence_threshold_db, step=5.0)
         if st.form_submit_button("保存"):

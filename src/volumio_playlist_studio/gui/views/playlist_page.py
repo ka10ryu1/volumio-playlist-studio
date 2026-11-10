@@ -159,6 +159,8 @@ def _conditions_panel(defaults: PlaylistDefaults, ctx: PageContext) -> PlaylistR
                 format_func=genre_label,
                 placeholder="ジャンルを選択",
                 key="pl_genres",
+                # 一覧から選ぶだけなので文字入力を受け付けず、スマートフォンでキーボードを出さない
+                filter_mode=None,
             )
             novelty = st.slider("選曲の意外性（左: 定番中心 / 右: 新しい発見）", 0.0, 1.0, step=0.1, key="pl_novelty")
             randomness = st.slider("ランダム性（左: 適合度順 / 右: ランダム）", 0.0, 1.0, step=0.1, key="pl_randomness")
@@ -301,6 +303,7 @@ def _edit_track(draft: list[SelectedTrack]) -> None:
         ids,
         format_func=lambda track_id: f"{ids.index(track_id) + 1}. {track_label(draft[ids.index(track_id)].track)}",
         key="pl_edit_track",
+        filter_mode=None,
     )
     if selected_id is None:
         return
@@ -351,7 +354,12 @@ def _saved_playlists_section(ctx: PageContext) -> None:
             return
 
         playlist = st.selectbox(
-            "プレイリスト", playlists, format_func=lambda p: f"{p.name}（{p.created_at}）", key="pl_manage"
+            "プレイリスト",
+            playlists,
+            format_func=lambda p: f"{p.name}（{p.created_at}）",
+            key="pl_manage",
+            # 一覧から選ぶだけなので文字入力を受け付けず、スマートフォンでキーボードを出さない
+            filter_mode=None,
         )
         if playlist is None:
             return
