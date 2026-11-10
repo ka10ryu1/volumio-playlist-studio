@@ -2,7 +2,7 @@
 
 実機との通信は、読み取り（プレイリスト一覧・ライブラリの参照）を REST API（volumio_rest.py）、
 プレイリストの作成・曲の追加を WebSocket（Socket.io）API（volumio_socketio.py）で行う。
-画面の登録は、実機での確認が済むまでモッククライアントで処理の流れを確認する（docs/volumio.md）。
+画面からは、実機（VolumioLiveClient）とモッククライアントのどちらにも登録できる（docs/volumio.md）。
 
 PC 上のファイルパスと Volumio 上の URI は、文字列の変換で対応付けない。Volumio のライブラリを
 参照して得た実際の URI の一覧と照合し、一意に対応する場合だけ登録に使う。
@@ -276,17 +276,23 @@ class RegistrationOutcome:
     items: list[RegistrationItem]
 
 
-def register_playlist(client: VolumioClient, name: str, entries: list[tuple[int, str | None]]) -> RegistrationOutcome:
+def register_playlist(
+    client: VolumioClient,
+    name: str,
+    entries: list[tuple[int, str | None]],
+    control: JobControl | None = None,
+) -> RegistrationOutcome:
     """Volumio に新しいプレイリストを作成し、曲を順に追加する。
 
     同じ名前のプレイリストがある場合は何もせずに例外を送出し、既存のプレイリストを変更しない。
-    URI が対応しない曲は追加せず `skipped` とする。追加に失敗したらそこで止め、
+    URI が対応しない曲は追加せず `skipped` とする。追加に失敗したとき、または中断したときはそこで止め、
     どの曲まで登録されたかを結果に残す。
 
     Args:
         client: Volumio のクライアント。
         name: 作成するプレイリスト名。
         entries: （楽曲 ID, URI）の並び。URI が対応しない曲は None。
+        control: 進捗通知（処理した曲数, 曲数）と中断の受け付け。中断は曲の追加の間で受け付ける。
 
     Raises:
         ValueError: 名前が空か使えない文字を含む場合、または登録できる曲が 1 曲もない場合。
@@ -306,7 +312,7 @@ def register_playlist(client: VolumioClient, name: str, entries: list[tuple[int,
         skipped = [RegistrationItem(i, track_id, uri, "skipped") for i, (track_id, uri) in enumerate(entries)]
         return RegistrationOutcome("failed", f"プレイリストを作成できませんでした: {exc}", skipped)
 
-    items, error = _add_tracks(client, name, entries)
+    items, error = _add_tracks(client, name, entries, control or JobControl())
     added = sum(1 for i in items if i.status == "added")
     if added == len(items):
         status = "success"
@@ -319,12 +325,16 @@ def register_playlist(client: VolumioClient, name: str, entries: list[tuple[int,
 
 
 def _add_tracks(
-    client: VolumioClient, name: str, entries: list[tuple[int, str | None]]
+    client: VolumioClient, name: str, entries: list[tuple[int, str | None]], control: JobControl
 ) -> tuple[list[RegistrationItem], str | None]:
-    """曲を順に追加する。失敗したらそれ以降の曲は追加せず `skipped` にする。"""
+    """曲を順に追加する。失敗・中断したらそれ以降の曲は追加せず `skipped` にする。"""
     items: list[RegistrationItem] = []
     error: str | None = None
     for position, (track_id, uri) in enumerate(entries):
+        control.report(position, len(entries))
+        if error is None and uri is not None and control.is_cancelled():
+            error = f"{position + 1} 曲目の追加の前に中断しました"
+
         if error is not None or uri is None:
             reason = None if uri is not None else "Volumio 上の URI と対応していません"
             items.append(RegistrationItem(position, track_id, uri, "skipped", reason))
@@ -338,4 +348,5 @@ def _add_tracks(
         else:
             items.append(RegistrationItem(position, track_id, uri, "added"))
 
+    control.report(len(entries), len(entries))
     return items, error

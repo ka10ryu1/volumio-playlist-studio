@@ -9,7 +9,7 @@ import pytest
 
 from volumio_playlist_studio.catalog import UNKNOWN_GENRE_LABEL, dashboard_stats, load_candidates
 from volumio_playlist_studio.config import AnalysisParams, is_typesafe_api_key_set, load_app_config, load_env_file
-from volumio_playlist_studio.jobs import BackgroundJob, JobControl, JobState
+from volumio_playlist_studio.jobs import BackgroundJob, JobControl, JobError, JobState
 from volumio_playlist_studio.library_paths import (
     HostPlatform,
     LibraryPathError,
@@ -194,6 +194,25 @@ def test_background_job_failure_is_logged_and_reported(caplog: pytest.LogCapture
     assert job.error is not None
     assert "ログ" in job.error
     assert "background job failed" in caplog.text
+
+
+def test_background_job_shows_message_of_expected_failure(caplog: pytest.LogCaptureFixture) -> None:
+    job = BackgroundJob(name="想定内の失敗")
+
+    def work(control: JobControl) -> str:
+        try:
+            raise ValueError("cause")
+        except ValueError as exc:
+            raise JobError("同じ名前のものがあるため、実行しませんでした。") from exc
+
+    with caplog.at_level(logging.WARNING):
+        job.start(work)
+        job.join(timeout=5)
+
+    assert job.state == JobState.FAILED
+    assert job.error == "同じ名前のものがあるため、実行しませんでした。"
+    assert "background job failed" in caplog.text
+    assert "cause" in caplog.text
 
 
 def test_background_job_can_be_cancelled() -> None:

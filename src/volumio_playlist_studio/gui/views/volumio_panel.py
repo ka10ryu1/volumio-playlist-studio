@@ -1,7 +1,8 @@
 """プレイリスト作成画面の「Volumio に登録」部分。
 
 照合先は次の 2 つから選ぶ。
-- Volumio 実機（読み取りのみ）: REST API で取得した曲の一覧と照合し、プレビューを表示する。登録は未実装
+- Volumio 実機: REST API で取得した曲の一覧と照合してプレビューを表示し、確認のうえ WebSocket API で登録する。
+  登録は通信に時間がかかるため、バックグラウンド処理で行う
 - モック: Volumio のライブラリを模擬し、照合から登録までの流れを確認する。実機は変更しない
 """
 
@@ -30,10 +31,10 @@ from volumio_playlist_studio.volumio import (
     match_tracks_to_uris,
     register_playlist,
 )
-from volumio_playlist_studio.workflows import run_volumio_sync
+from volumio_playlist_studio.workflows import VolumioRegistrationRequest, run_volumio_register, run_volumio_sync
 
 _MOCK_KEY = "volumio_mock_client"
-_SOURCE_REAL = "Volumio 実機（読み取りのみ）"
+_SOURCE_REAL = "Volumio 実機"
 _SOURCE_MOCK = "モック（模擬）"
 # モックが模擬する Volumio 上の保存場所。実機の URI は実機のライブラリを参照して確認する
 _MOCK_STORAGE_PREFIX = "music-library/INTERNAL"
@@ -76,18 +77,18 @@ def render(ctx: PageContext, saved_playlist_id: int | None) -> None:
 
         tracks = [t for t in (get_track(ctx.conn, e.track_id) for e in playlist.entries) if t is not None]
         if source == _SOURCE_REAL and host is not None:
-            _real_preview(ctx, host, tracks)
+            _real_preview_and_register(ctx, host, playlist, tracks)
         else:
             _mock_preview_and_register(ctx, playlist, tracks)
 
         _history(ctx, playlist)
 
 
-def _real_preview(ctx: PageContext, host: str, tracks: list[Track]) -> None:
-    """Volumio 実機から取得した曲の一覧と照合し、プレビューを表示する。"""
+def _real_preview_and_register(ctx: PageContext, host: str, playlist: SavedPlaylist, tracks: list[Track]) -> None:
+    """Volumio 実機から取得した曲の一覧と照合してプレビューを表示し、確認のうえ実機に登録する。"""
     st.info(
-        "Volumio 実機からは曲の一覧を読み取るだけで、Volumio は変更しません。"
-        "実機へのプレイリストの登録は未実装です（登録の流れはモックで確認できます）。"
+        "曲の一覧の取得と照合では、Volumio は変更しません。「Volumio に登録」を押したときだけ、"
+        "Volumio 実機に新しいプレイリストを作成します（既存のプレイリストは変更しません）。"
     )
     collected_at = last_collected_at(ctx.conn, host)
     st.caption(f"接続先: {host}　曲の一覧の取得: {collected_at or '未取得'}")
@@ -104,7 +105,57 @@ def _real_preview(ctx: PageContext, host: str, tracks: list[Track]) -> None:
         st.caption("まだ曲の一覧を取得していません。")
         return
 
-    _preview(tracks, match_tracks_to_uris(tracks, uris))
+    matches = match_tracks_to_uris(tracks, uris)
+    _preview(tracks, matches)
+    st.caption("Volumio のライブラリを変更した後は、曲の一覧を取得し直してから登録してください。")
+    job_running = running_job() is not None
+    registrable = any(m.status == MatchStatus.MATCHED for m in matches)
+    name = _registration_form(playlist, "real", disabled=job_running or not registrable)
+    if job_running:
+        st.caption("実行中の処理が終わると登録できます。")
+
+    if name is None:
+        return
+
+    request = VolumioRegistrationRequest(
+        host, playlist.id, name, [(t.id, m.uri) for t, m in zip(tracks, matches, strict=True)]
+    )
+    start_job(
+        "Volumio へのプレイリストの登録",
+        ctx.config.database_path,
+        lambda conn, control: run_volumio_register(conn, request, control),
+    )
+    st.rerun()
+
+
+def _registration_form(
+    playlist: SavedPlaylist, source_key: str, *, existing: list[str] | None = None, disabled: bool = False
+) -> str | None:
+    """プレイリスト名の入力・確認のチェック・登録ボタンを表示し、ボタンが押されたら入力した名前を返す。
+
+    照合先を切り替えたときに確認のチェックを引き継がないよう、照合先ごとに別のキーを使う。
+
+    Args:
+        playlist: 登録するプレイリスト。
+        source_key: 照合先を区別するキー。
+        existing: 既存のプレイリスト名。分かる場合だけ渡し、同じ名前なら警告する（登録時にも確認する）。
+        disabled: 登録ボタンを無効にするかどうか。
+    """
+    name = st.text_input(
+        "Volumio のプレイリスト名", value=playlist.name, key=f"volumio-name-{source_key}-{playlist.id}"
+    )
+    if existing is not None and name.strip() in existing:
+        st.warning("同じ名前のプレイリストが既にあります。既存のプレイリストは変更しないため、別の名前にしてください。")
+
+    confirmed = st.checkbox(
+        "この内容で新しいプレイリストを作成します", key=f"volumio-confirm-{source_key}-{playlist.id}"
+    )
+    if st.button(
+        "Volumio に登録", disabled=disabled or not confirmed, key=f"volumio-register-{source_key}-{playlist.id}"
+    ):
+        return name
+
+    return None
 
 
 def _mock_preview_and_register(ctx: PageContext, playlist: SavedPlaylist, tracks: list[Track]) -> None:
@@ -121,12 +172,8 @@ def _mock_preview_and_register(ctx: PageContext, playlist: SavedPlaylist, tracks
     matches = match_tracks_to_uris(tracks, uris)
     _preview(tracks, matches)
 
-    name = st.text_input("Volumio のプレイリスト名", value=playlist.name, key=f"volumio-name-{playlist.id}")
-    if name.strip() in client.list_playlists():
-        st.warning("同じ名前のプレイリストが既にあります。既存のプレイリストは変更しないため、別の名前にしてください。")
-
-    confirmed = st.checkbox("この内容で新しいプレイリストを作成します", key=f"volumio-confirm-{playlist.id}")
-    if st.button("Volumio に登録", disabled=not confirmed, key=f"volumio-register-{playlist.id}"):
+    name = _registration_form(playlist, "mock", existing=client.list_playlists())
+    if name is not None:
         _register(ctx, client, playlist, name, [(t.id, m.uri) for t, m in zip(tracks, matches, strict=True)])
 
 

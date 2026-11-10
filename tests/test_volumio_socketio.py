@@ -10,14 +10,21 @@ import contextlib
 import hashlib
 import json
 import socket
+import sqlite3
 import threading
 from collections.abc import Iterator
 
 import pytest
 from test_volumio_rest import FakeVolumio
 
+from volumio_playlist_studio.jobs import JobControl, JobError
+from volumio_playlist_studio.sample_data import DEMO_LIBRARY_ROOT, load_demo_library
+from volumio_playlist_studio.storage.database import transaction
+from volumio_playlist_studio.storage.playlists import PlaylistDraft, PlaylistEntry, list_registrations, save_playlist
+from volumio_playlist_studio.storage.tracks import list_tracks
 from volumio_playlist_studio.volumio import PlaylistExistsError, VolumioError, register_playlist
 from volumio_playlist_studio.volumio_socketio import SocketIOProtocol, SocketIOSession, VolumioLiveClient
+from volumio_playlist_studio.workflows import VolumioRegistrationRequest, run_volumio_register
 
 _WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 _OPCODE_TEXT = 0x1
@@ -395,3 +402,97 @@ def test_reads_use_rest_api() -> None:
         assert client.protocol is None
     finally:
         volumio.close()
+
+
+def _saved_playlist(db: sqlite3.Connection) -> tuple[int, list[int]]:
+    """登録元のプレイリストを保存し、（プレイリスト ID, 楽曲 ID の並び）を返す。"""
+    load_demo_library(db)
+    track_ids = [t.id for t in list_tracks(db, DEMO_LIBRARY_ROOT)[:3]]
+    with transaction(db):
+        playlist_id = save_playlist(
+            db, PlaylistDraft("元", {}, 0, "rules", 0.0, [PlaylistEntry(i, None) for i in track_ids])
+        )
+
+    return playlist_id, track_ids
+
+
+def test_register_workflow_creates_playlist_and_records_history(db: sqlite3.Connection) -> None:
+    fake = FakeSocketIO()
+    playlist_id, (a, b, _) = _saved_playlist(db)
+    progress: list[tuple[int, int]] = []
+
+    message = run_volumio_register(
+        db,
+        VolumioRegistrationRequest(fake.host, playlist_id, " 夜の曲 ", [(a, URI_A), (b, URI_B)]),
+        JobControl(progress=lambda d, t: progress.append((d, t))),
+    )
+    fake.close()
+
+    assert "夜の曲" in message
+    assert "2 曲" in message
+    assert fake.playlists == {"夜の曲": [URI_A, URI_B]}
+    assert progress[-1] == (2, 2)
+    [record] = list_registrations(db, playlist_id)
+    assert (record.volumio_playlist_name, record.client_kind, record.status) == ("夜の曲", "websocket", "success")
+    assert [(i.track_id, i.uri, i.status) for i in record.items] == [(a, URI_A, "added"), (b, URI_B, "added")]
+
+
+def test_register_workflow_does_not_touch_existing_playlist(db: sqlite3.Connection) -> None:
+    fake = FakeSocketIO()
+    fake.playlists["既存"] = [URI_B]
+    playlist_id, (a, _, _) = _saved_playlist(db)
+
+    with pytest.raises(JobError, match="既にある"):
+        run_volumio_register(db, VolumioRegistrationRequest(fake.host, playlist_id, "既存", [(a, URI_A)]), JobControl())
+
+    fake.close()
+
+    assert fake.playlists == {"既存": [URI_B]}
+    assert not any(p.startswith("42") for p in fake.received)
+    assert list_registrations(db, playlist_id) == []
+
+
+@pytest.mark.parametrize("name", ["", "a/b"])
+def test_register_workflow_rejects_invalid_name_without_connecting(db: sqlite3.Connection, name: str) -> None:
+    fake = FakeSocketIO()
+    playlist_id, (a, _, _) = _saved_playlist(db)
+
+    with pytest.raises(JobError, match="使えない文字"):
+        run_volumio_register(db, VolumioRegistrationRequest(fake.host, playlist_id, name, [(a, URI_A)]), JobControl())
+
+    fake.close()
+
+    assert fake.paths == []
+    assert list_registrations(db, playlist_id) == []
+
+
+def test_register_workflow_records_partial_result_and_fails(db: sqlite3.Connection) -> None:
+    fake = FakeSocketIO()
+    fake.failing_uris.add(URI_B)
+    playlist_id, (a, b, c) = _saved_playlist(db)
+
+    with pytest.raises(JobError, match=r"1/3 曲を登録"):
+        run_volumio_register(
+            db,
+            VolumioRegistrationRequest(fake.host, playlist_id, "途中で失敗", [(a, URI_A), (b, URI_B), (c, URI_A)]),
+            JobControl(),
+        )
+
+    fake.close()
+
+    assert fake.playlists == {"途中で失敗": [URI_A]}
+    [record] = list_registrations(db, playlist_id)
+    assert record.status == "partial"
+    assert [i.status for i in record.items] == ["added", "failed", "skipped"]
+
+
+def test_register_workflow_reports_unreachable_volumio(db: sqlite3.Connection) -> None:
+    with socket.create_server(("127.0.0.1", 0)) as unused:
+        host = f"127.0.0.1:{unused.getsockname()[1]}"
+
+    playlist_id, (a, _, _) = _saved_playlist(db)
+
+    with pytest.raises(JobError, match="通信に失敗"):
+        run_volumio_register(db, VolumioRegistrationRequest(host, playlist_id, "p", [(a, URI_A)]), JobControl())
+
+    assert list_registrations(db, playlist_id) == []
