@@ -1,8 +1,10 @@
+import threading
 import unicodedata
 
 import pytest
 from conftest import TrackFactory
 
+from volumio_playlist_studio.jobs import JobControl
 from volumio_playlist_studio.volumio import (
     BrowseItem,
     MatchStatus,
@@ -148,6 +150,42 @@ def test_unmatched_tracks_are_skipped() -> None:
         ("added", None),
         ("skipped", "Volumio 上の URI と対応していません"),
     ]
+
+
+def test_register_playlist_reports_progress_per_track() -> None:
+    client = MockVolumioClient()
+    progress: list[tuple[int, int]] = []
+
+    register_playlist(
+        client,
+        "進捗",
+        [(1, URIS[0]), (2, None), (3, URIS[1])],
+        JobControl(progress=lambda d, t: progress.append((d, t))),
+    )
+
+    assert progress == [(0, 3), (1, 3), (2, 3), (3, 3)]
+
+
+def test_register_playlist_stops_when_cancelled() -> None:
+    client = MockVolumioClient()
+    cancel = threading.Event()
+
+    def cancel_after_first(done: int, total: int) -> None:
+        if done == 1:
+            cancel.set()
+
+    outcome = register_playlist(
+        client,
+        "中断",
+        [(1, URIS[0]), (2, URIS[1]), (3, URIS[3])],
+        JobControl(progress=cancel_after_first, cancel=cancel),
+    )
+
+    assert outcome.status == "partial"
+    assert outcome.error is not None
+    assert "2 曲目の追加の前に中断" in outcome.error
+    assert [i.status for i in outcome.items] == ["added", "skipped", "skipped"]
+    assert client.playlists == {"中断": [URIS[0]]}
 
 
 @pytest.mark.parametrize(

@@ -13,6 +13,13 @@ from enum import StrEnum
 logger = logging.getLogger(__name__)
 
 
+class JobError(Exception):
+    """想定内の理由で処理が失敗したことを表す例外。メッセージ（日本語）をそのまま画面に表示する。
+
+    同じ名前のプレイリストがあるなど、利用者が対処できる失敗に使う。想定外の例外は汎用のメッセージにする。
+    """
+
+
 @dataclass
 class JobControl:
     """処理の進捗通知と中断の受け付け。
@@ -93,6 +100,11 @@ class BackgroundJob:
         # バックグラウンド処理の入口として、ここで例外をまとめて捕捉し、記録と画面への通知を行う
         try:
             result = target(self.control)
+        except JobError as exc:
+            # 画面向けのメッセージは日本語のため、ログには原因の例外（あれば）を残す
+            logger.warning("background job failed: name=%s cause=%r", self.name, exc.__cause__)
+            self.error = str(exc)
+            self.state = JobState.FAILED
         except Exception:
             logger.exception("background job failed: name=%s", self.name)
             self.error = "処理中にエラーが発生しました。詳細は設定画面のログを確認してください。"
