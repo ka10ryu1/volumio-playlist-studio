@@ -36,6 +36,7 @@ from volumio_playlist_studio.storage.playlists import (
     PlaylistEntry,
     RegistrationItem,
     RegistrationRecord,
+    delete_playlist,
     get_playlist,
     list_playlists,
     list_registrations,
@@ -167,6 +168,57 @@ def test_playlist_roundtrip_and_feedback(db: sqlite3.Connection) -> None:
     assert [p.id for p in list_playlists(db)] == [playlist_id]
     assert track_usage_counts(db) == {ids[2]: 1, ids[0]: 1}
     assert get_playlist(db, 999) is None
+
+
+def test_deleted_playlist_is_hidden_but_keeps_feedback(db: sqlite3.Connection) -> None:
+    a, b = _add(db, "a.flac"), _add(db, "b.flac")
+    kept = save_playlist(db, PlaylistDraft("残す", {}, 0, "rules", 0.0, [PlaylistEntry(a, None)]))
+    deleted = save_playlist(
+        db, PlaylistDraft("消す", {}, 0, "jev", 0.0, [PlaylistEntry(a, None), PlaylistEntry(b, None)])
+    )
+    set_feedback(db, deleted, 2, {1})
+
+    delete_playlist(db, deleted)
+
+    assert [p.id for p in list_playlists(db)] == [kept]
+    assert [p.id for p in list_playlists(db, include_deleted=True)] == [deleted, kept]
+    saved = get_playlist(db, deleted)
+    assert saved is not None
+    assert saved.deleted_at is not None
+    assert saved.satisfaction == 2
+    assert [e.unsuitable for e in saved.entries] == [False, True]
+    assert track_usage_counts(db) == {a: 1}  # 削除したプレイリストの曲は数えない
+    kept_playlist = get_playlist(db, kept)
+    assert kept_playlist is not None
+    assert kept_playlist.deleted_at is None
+
+
+def test_deleted_playlist_keeps_registration_history(db: sqlite3.Connection) -> None:
+    track_id = _add(db, "a.flac")
+    playlist_id = save_playlist(db, PlaylistDraft("p", {}, 0, "rules", 0.0, [PlaylistEntry(track_id, None)]))
+    save_registration(
+        db,
+        RegistrationRecord(playlist_id, "p", "mock", "success", None, "2026-01-01T00:00:00+00:00", []),
+    )
+
+    delete_playlist(db, playlist_id)
+
+    assert [r.status for r in list_registrations(db, playlist_id)] == ["success"]
+
+
+def test_deleting_missing_or_deleted_playlist_fails(db: sqlite3.Connection) -> None:
+    track_id = _add(db, "a.flac")
+    playlist_id = save_playlist(db, PlaylistDraft("p", {}, 0, "rules", 0.0, [PlaylistEntry(track_id, None)]))
+    delete_playlist(db, playlist_id)
+    first = get_playlist(db, playlist_id)
+
+    with pytest.raises(ValueError, match="playlist"):
+        delete_playlist(db, playlist_id)
+
+    with pytest.raises(ValueError, match="playlist"):
+        delete_playlist(db, 999)
+
+    assert get_playlist(db, playlist_id) == first  # 削除日時を上書きしない
 
 
 @pytest.mark.parametrize(("name", "entries"), [("   ", [PlaylistEntry(1, None)]), ("名前", [])])

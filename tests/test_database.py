@@ -120,3 +120,28 @@ def test_version_1_database_is_migrated_keeping_evaluations(tmp_path: Path, monk
     assert tuple(row) == ("jazz", None)
     upgraded.close()
     assert (tmp_path / "db.sqlite3.bak-v1").exists()
+
+
+def test_existing_playlists_stay_visible_after_adding_deleted_at(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "db.sqlite3"
+    # プレイリストの削除日時の列を追加する前のバージョン（4）の DB を作る
+    with monkeypatch.context() as patched:
+        patched.setattr(database, "MIGRATIONS", database.MIGRATIONS[:4])
+        patched.setattr(database, "SCHEMA_VERSION", 4)
+        old = connect(path)
+        with transaction(old):
+            old.execute(
+                "INSERT INTO playlists (name, conditions_json, seed, classification_source, total_duration_sec, "
+                "satisfaction, created_at, updated_at) VALUES ('p', '{}', 0, 'rules', 0.0, 4, 'now', 'now')"
+            )
+
+        old.close()
+
+    upgraded = connect(path)
+
+    assert current_version(upgraded) == SCHEMA_VERSION
+    row = upgraded.execute("SELECT name, satisfaction, deleted_at FROM playlists").fetchone()
+    assert tuple(row) == ("p", 4, None)
+    upgraded.close()

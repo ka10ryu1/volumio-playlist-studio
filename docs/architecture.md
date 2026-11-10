@@ -105,7 +105,7 @@ flowchart LR
 | `analysis_errors` | 解析エラー | 段階（tags/features/classification）、種類、メッセージ（絶対パスを除去済み）、バージョン、解決済みフラグ |
 | `classifications` | 分類結果 | `engine`・`engine_version`（楽曲ごとに一意）、応答したモデル名、結果（JSON。確信度・確率を含む） |
 | `evaluations` | 人手評価 | 用途（tuning/holdout）、評価時に表示した分類結果の ID と写し（分類結果の行は再分類で上書きされるため）、ジャンル・ムードの正誤と正解、属性の 5 段階評価 |
-| `playlists` / `playlist_tracks` | 保存したプレイリスト | 生成条件（JSON）、seed、使った分類結果の種類、満足度／曲順、適合度、手動追加、不適切フラグ |
+| `playlists` / `playlist_tracks` | 保存したプレイリスト | 生成条件（JSON）、seed、使った分類結果の種類、満足度、`deleted_at`（削除日時。満足度などの評価を残すため行は消さず、一覧と意外性の計算から除く）／曲順、適合度、手動追加、不適切フラグ |
 | `volumio_registrations` / `volumio_registration_items` | Volumio 登録履歴 | クライアントの種類、結果（success/partial/failed）、曲ごとの URI と結果 |
 | `volumio_library_uris` | Volumio から取得した曲の URI | 接続先、URI、取得日時（照合のたびに Volumio をたどらないよう保存） |
 | `app_settings` | GUI で変更する設定 | 音楽フォルダ、解析パラメータ、Jev 設定、分類結果の種類（秘密情報は保存しない） |
