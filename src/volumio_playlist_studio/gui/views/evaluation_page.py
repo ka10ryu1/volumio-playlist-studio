@@ -110,6 +110,8 @@ def _labeling_section(ctx: PageContext, tracks: dict[int, Track], labels: dict[i
         format_func=lambda i: (
             f"{'✓ ' if labels[i].is_evaluated else ''}{track_label(tracks[i])}（{_SPLIT_LABELS[labels[i].split]}）"
         ),
+        # 一覧から選ぶだけなので文字入力を受け付けず、スマートフォンでキーボードを出さない
+        filter_mode=None,
     )
     if track_id is None:
         return
@@ -150,6 +152,7 @@ def _label_form(ctx: PageContext, label: EvaluationLabel, stored: StoredClassifi
             genres,
             index=_index_or_none(genres, genre_correction),
             format_func=genre_label,
+            filter_mode=None,
         )
         st.markdown(f"判定ムード: **{mood_label(predicted_mood)}**")
         mood_verdict = st.radio(
@@ -164,6 +167,7 @@ def _label_form(ctx: PageContext, label: EvaluationLabel, stored: StoredClassifi
             moods,
             index=_index_or_none(moods, mood_correction),
             format_func=mood_label,
+            filter_mode=None,
         )
 
         st.markdown("属性の評価（評価しない属性は「-」のまま）")
@@ -325,7 +329,9 @@ def _playlist_feedback_section(ctx: PageContext) -> None:
 
 
 def _playlist_feedback_form(ctx: PageContext, playlists: list[SavedPlaylist]) -> None:
-    playlist = st.selectbox("プレイリスト", playlists, format_func=lambda p: f"{p.name}（{p.created_at}）")
+    playlist = st.selectbox(
+        "プレイリスト", playlists, format_func=lambda p: f"{p.name}（{p.created_at}）", filter_mode=None
+    )
     if playlist is None:
         return
 
@@ -339,6 +345,7 @@ def _playlist_feedback_form(ctx: PageContext, playlists: list[SavedPlaylist]) ->
             default=[i for i, e in enumerate(playlist.entries) if e.unsuitable],
             format_func=lambda i: f"{i + 1}. {_optional_track_label(tracks[i])}",
             placeholder="合わなかった曲を選択",
+            filter_mode=None,
         )
         if st.form_submit_button("評価を保存"):
             with transaction(ctx.conn):

@@ -110,10 +110,13 @@ def _track_table(ctx: PageContext, tracks: list[Track]) -> None:
     pending = {t.id for t in analysis_store.tracks_needing_analysis(ctx.conn, library_root, ANALYSIS_VERSION)}
     failed = analysis_store.failed_track_ids(ctx.conn, library_root, ANALYSIS_VERSION)
     with st.expander("絞り込み・表示項目"):
-        state = st.selectbox("解析状況", ["すべて", "解析済み", "未解析", "解析失敗", "未対応形式"])
+        # 選択欄は一覧から選ぶだけなので文字入力を受け付けず、スマートフォンでキーボードを出さない。
+        # 曲名などでの絞り込みは上の検索欄で行う
+        state = st.selectbox("解析状況", ["すべて", "解析済み", "未解析", "解析失敗", "未対応形式"], filter_mode=None)
         genre = st.selectbox(
             "判定ジャンルで絞り込み",
             ["すべて", *sorted({genre_label(c.genre) for c in classifications.values()}), "未分類"],
+            filter_mode=None,
         )
         detailed = st.checkbox("アルバム・タグ・ムードも一覧に表示")
 
@@ -152,7 +155,7 @@ def _track_table(ctx: PageContext, tracks: list[Track]) -> None:
         st.info("条件に合う曲がありません。検索語や絞り込みを変更してください。")
         return
 
-    selected = st.selectbox("詳細を表示する曲", shown, format_func=track_label)
+    selected = st.selectbox("詳細を表示する曲", shown, format_func=track_label, filter_mode=None)
     if selected is not None:
         _track_detail(ctx, selected)
 
