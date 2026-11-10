@@ -14,14 +14,16 @@ from volumio_playlist_studio.classify.jev import ENGINE_NAME as JEV_ENGINE
 from volumio_playlist_studio.classify.jev import JevClassifier, build_questions, create_client
 from volumio_playlist_studio.classify.runner import RunLimits, classify_tracks
 from volumio_playlist_studio.config import JEV_QUESTION_VERSION, MoodDecision
-from volumio_playlist_studio.jobs import JobControl
+from volumio_playlist_studio.jobs import JobControl, JobError
 from volumio_playlist_studio.scanner import scan_library
 from volumio_playlist_studio.storage import analysis as analysis_store
 from volumio_playlist_studio.storage import settings_store
-from volumio_playlist_studio.storage.database import transaction
+from volumio_playlist_studio.storage.database import transaction, utc_now
+from volumio_playlist_studio.storage.playlists import RegistrationRecord, save_registration
 from volumio_playlist_studio.storage.volumio_library import replace_uris
-from volumio_playlist_studio.volumio import collect_track_uris
+from volumio_playlist_studio.volumio import PlaylistExistsError, VolumioError, collect_track_uris, register_playlist
 from volumio_playlist_studio.volumio_rest import VolumioRestClient
+from volumio_playlist_studio.volumio_socketio import VolumioLiveClient
 
 
 @dataclass(frozen=True)
@@ -39,6 +41,23 @@ class JevEstimate:
     tracks_this_run: int
     requests_this_run: int
     questions_per_request: int
+
+
+@dataclass(frozen=True)
+class VolumioRegistrationRequest:
+    """Volumio 実機へのプレイリスト登録の依頼。
+
+    Attributes:
+        host: Volumio の接続先。
+        playlist_id: 登録するアプリ側のプレイリストの ID。
+        name: Volumio に作成するプレイリスト名。
+        entries: （楽曲 ID, URI）の並び。URI が対応しない曲は None。
+    """
+
+    host: str
+    playlist_id: int
+    name: str
+    entries: list[tuple[int, str | None]]
 
 
 def run_scan(conn: sqlite3.Connection, root: Path, control: JobControl) -> str:
@@ -136,3 +155,49 @@ def run_volumio_sync(conn: sqlite3.Connection, host: str, control: JobControl) -
         replace_uris(conn, host, uris)
 
     return f"Volumio のライブラリから {len(uris)} 曲の情報を取得しました。"
+
+
+def run_volumio_register(conn: sqlite3.Connection, request: VolumioRegistrationRequest, control: JobControl) -> str:
+    """Volumio 実機に新しいプレイリストを作成して曲を追加し、結果を登録履歴に保存する。
+
+    既存のプレイリストは変更しない。プレイリストの作成後の結果（一部のみ登録・失敗・中断を含む）は、
+    曲ごとに登録履歴へ保存してから返す。
+
+    Args:
+        conn: アプリの DB 接続。
+        request: 登録の依頼。
+        control: 進捗通知と中断の受け付け。
+
+    Raises:
+        JobError: 登録しなかった場合、またはすべての曲を登録できなかった場合（画面表示用のメッセージ）。
+        ValueError: 接続先の形式が不正な場合。
+    """
+    started_at = utc_now()
+    # 接続先の形式の誤りは設定の問題のため、ここでは捕捉しない
+    name = request.name.strip()
+    client = VolumioLiveClient(request.host, should_stop=control.is_cancelled)
+    try:
+        with client:
+            outcome = register_playlist(client, name, request.entries, control)
+    except PlaylistExistsError as exc:
+        raise JobError("同じ名前のプレイリストが Volumio に既にあるため、登録しませんでした。") from exc
+    except ValueError as exc:
+        raise JobError(
+            "プレイリスト名が空か使えない文字（/ や \\ など）を含むか、登録できる曲がないため、登録しませんでした。"
+        ) from exc
+    except VolumioError as exc:
+        raise JobError(f"Volumio との通信に失敗したため、登録しませんでした: {exc}") from exc
+
+    with transaction(conn):
+        save_registration(
+            conn,
+            RegistrationRecord(
+                request.playlist_id, name, client.kind, outcome.status, outcome.error, started_at, outcome.items
+            ),
+        )
+
+    added = sum(1 for i in outcome.items if i.status == "added")
+    if outcome.status != "success":
+        raise JobError(f"登録が完了しませんでした（{added}/{len(outcome.items)} 曲を登録）。{outcome.error or ''}")
+
+    return f"Volumio にプレイリスト「{name}」を作成し、{added} 曲を登録しました。"

@@ -55,8 +55,9 @@ def _volumio_section(ctx: PageContext) -> None:
     current = ctx.volumio_host
     st.caption(f"現在: {current or '未設定'}（環境変数 {VOLUMIO_HOST_ENV} が設定されていればそちらを優先）")
     st.info(
-        "Volumio からは、プレイリスト一覧と曲の一覧を読み取るだけです（Volumio は変更しません）。"
-        "Volumio へのプレイリストの登録は未実装で、モックでのみ確認できます。"
+        "接続テストと曲の一覧の取得では、Volumio を変更しません。"
+        "Volumio を変更するのは、プレイリスト作成画面で確認のうえ「Volumio に登録」を押したときだけです"
+        "（新しいプレイリストを作成します）。"
     )
     with st.form("volumio-host"):
         host = st.text_input("ホスト名または IP アドレス", value=saved or "", placeholder="volumio.local")
