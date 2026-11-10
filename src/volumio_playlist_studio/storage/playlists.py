@@ -1,4 +1,8 @@
-"""プレイリスト、プレイリストへのフィードバック、Volumio 登録履歴の読み書き。"""
+"""プレイリスト、プレイリストへのフィードバック、Volumio 登録履歴の読み書き。
+
+プレイリストの削除は論理削除とする。満足度や不適切な曲の評価は選曲の改善に使うため、
+削除したプレイリストも行は残し、一覧と選曲の意外性の計算から除く。
+"""
 
 import json
 import sqlite3
@@ -37,7 +41,11 @@ class PlaylistDraft:
 
 @dataclass(frozen=True)
 class SavedPlaylist:
-    """保存済みのプレイリスト。"""
+    """保存済みのプレイリスト。
+
+    Attributes:
+        deleted_at: 削除した日時。削除していなければ None。
+    """
 
     id: int
     name: str
@@ -48,6 +56,7 @@ class SavedPlaylist:
     satisfaction: int | None
     created_at: str
     entries: list[PlaylistEntry]
+    deleted_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -118,14 +127,23 @@ def save_playlist(conn: sqlite3.Connection, draft: PlaylistDraft) -> int:
     return playlist_id
 
 
-def list_playlists(conn: sqlite3.Connection) -> list[SavedPlaylist]:
-    """保存済みのプレイリストを新しい順に返す。"""
-    rows = conn.execute("SELECT * FROM playlists ORDER BY id DESC").fetchall()
+def list_playlists(conn: sqlite3.Connection, *, include_deleted: bool = False) -> list[SavedPlaylist]:
+    """保存済みのプレイリストを新しい順に返す。
+
+    Args:
+        conn: 対象の接続。
+        include_deleted: 削除したプレイリストも含めるかどうか。評価の集計で使う。
+    """
+    if include_deleted:
+        rows = conn.execute("SELECT * FROM playlists ORDER BY id DESC").fetchall()
+    else:
+        rows = conn.execute("SELECT * FROM playlists WHERE deleted_at IS NULL ORDER BY id DESC").fetchall()
+
     return [_row_to_playlist(conn, row) for row in rows]
 
 
 def get_playlist(conn: sqlite3.Connection, playlist_id: int) -> SavedPlaylist | None:
-    """ID でプレイリストを取得する。"""
+    """ID でプレイリストを取得する。削除したプレイリストも返す。"""
     row = conn.execute("SELECT * FROM playlists WHERE id = ?", (playlist_id,)).fetchone()
     return None if row is None else _row_to_playlist(conn, row)
 
@@ -143,6 +161,7 @@ def _row_to_playlist(conn: sqlite3.Connection, row: sqlite3.Row) -> SavedPlaylis
         total_duration_sec=row["total_duration_sec"],
         satisfaction=row["satisfaction"],
         created_at=row["created_at"],
+        deleted_at=row["deleted_at"],
         entries=[
             PlaylistEntry(
                 track_id=e["track_id"],
@@ -176,9 +195,36 @@ def set_feedback(
     )
 
 
+def delete_playlist(conn: sqlite3.Connection, playlist_id: int) -> None:
+    """プレイリストを削除する。評価を残すため行は消さず、削除した日時を記録する。
+
+    Volumio に登録したプレイリストは変更しない。
+
+    Raises:
+        ValueError: プレイリストがない、または削除済みの場合。
+    """
+    now = utc_now()
+    cursor = conn.execute(
+        "UPDATE playlists SET deleted_at = ?, updated_at = ? WHERE id = ? AND deleted_at IS NULL",
+        (now, now, playlist_id),
+    )
+    if cursor.rowcount == 0:
+        raise ValueError("playlist not found or already deleted")
+
+
 def track_usage_counts(conn: sqlite3.Connection) -> dict[int, int]:
-    """保存済みプレイリストに各楽曲が含まれた回数を返す。選曲の意外性の計算に使う。"""
-    rows = conn.execute("SELECT track_id, COUNT(*) AS n FROM playlist_tracks GROUP BY track_id").fetchall()
+    """保存済みプレイリストに各楽曲が含まれた回数を返す。選曲の意外性の計算に使う。
+
+    削除したプレイリストは数えない。
+    """
+    rows = conn.execute(
+        """
+        SELECT pt.track_id, COUNT(*) AS n
+        FROM playlist_tracks AS pt JOIN playlists AS p ON p.id = pt.playlist_id
+        WHERE p.deleted_at IS NULL
+        GROUP BY pt.track_id
+        """
+    ).fetchall()
     return {row["track_id"]: row["n"] for row in rows}
 
 

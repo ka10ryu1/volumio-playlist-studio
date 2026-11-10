@@ -186,6 +186,10 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         "ALTER TABLE analysis_errors ADD COLUMN file_size INTEGER",
         "ALTER TABLE analysis_errors ADD COLUMN mtime_ns INTEGER",
     ),
+    (
+        # プレイリストを削除した日時。満足度・不適切な曲の評価を残すため、行は消さずに一覧から隠す
+        "ALTER TABLE playlists ADD COLUMN deleted_at TEXT",
+    ),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)
