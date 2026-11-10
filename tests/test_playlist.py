@@ -245,6 +245,19 @@ def test_energetic_playlist_starts_low_and_relaxing_playlist_ends_low(
         # 主属性が判定保留なら候補にしない
         (Mood.ENERGETIC, {"party": 1.0, "brightness": 1.0}, None),
         (Mood.OMAKASE, {}, 0.6),
+        (Mood.MORNING, {"brightness": 1.0, "energy": 0.55, "calmness": 0.6}, 1.0),
+        (Mood.MORNING, {"brightness": 0.0, "energy": 0.55, "calmness": 0.6}, (0 + 1 + 1) / 4),
+        (Mood.CAFE, {"relaxation": 0.7, "energy": 0.4, "brightness": 0.7}, 1.0),
+        (Mood.DRIVE, {"energy": 0.7, "brightness": 0.7, "party": 0.6}, 1.0),
+        (Mood.DRIVE, {"energy": 0.2, "party": 0.6}, (2 * 0.5 + 1) / 3),
+        (Mood.WORKOUT, {"party": 1.0, "energy": 1.0, "relaxation": 0.0}, 1.0),
+        (Mood.WORKOUT, {"party": 0.5, "energy": 0.5, "relaxation": 1.0}, (2 * 0.5 + 2 * 0.5 + 0) / 5),
+        (Mood.MELLOW, {"brightness": 0.0, "energy": 0.3, "calmness": 0.8}, 1.0),
+        (Mood.SLEEP, {"calmness": 1.0, "energy": 0.0, "relaxation": 1.0}, 1.0),
+        (Mood.SLEEP, {"calmness": 0.0, "energy": 1.0, "relaxation": 0.0}, 0.0),
+        # 明るさが主属性の雰囲気は、明るさを判定しないルールベースの結果では候補にならない
+        (Mood.MORNING, {"energy": 0.55, "calmness": 0.6}, None),
+        (Mood.MELLOW, {"energy": 0.3, "calmness": 0.8}, None),
     ],
 )
 def test_suitability(
@@ -256,6 +269,52 @@ def test_suitability(
         assert value is None
     else:
         assert value == pytest.approx(expected)
+
+
+@given(
+    mood=st.sampled_from(list(Mood)),
+    values=st.dictionaries(st.sampled_from(list(Attribute)), st.floats(min_value=0.0, max_value=1.0)),
+)
+def test_suitability_is_within_unit_range_for_every_mood(mood: Mood, values: dict[Attribute, float]) -> None:
+    classification = ClassificationResult(
+        engine="test", engine_version="1", model=None, genre=None, genre_confidence=None,
+        genre_probabilities=None, mood=None, attributes={a: AttributeScore(v) for a, v in values.items()},
+    )  # fmt: skip
+
+    value = suitability(classification, mood)
+
+    assert value is None or 0.0 <= value <= 1.0
+
+
+def test_sleep_playlist_ends_with_lowest_energy(
+    make_track: TrackFactory, make_classification: ClassificationFactory
+) -> None:
+    energies = [0.2, 0.05, 0.15, 0.0, 0.1]
+    candidates = [
+        Candidate(make_track(), make_classification(calmness=0.95, energy=e, relaxation=0.9), None) for e in energies
+    ]
+
+    result = generate_playlist(candidates, PlaylistRequest(Mood.SLEEP, duration_min=None, track_count=5), DEFAULTS)
+
+    ordered = [
+        t.candidate.classification.attribute_value(Attribute.ENERGY)
+        for t in result.tracks
+        if t.candidate.classification
+    ]
+    assert ordered == sorted(energies, reverse=True)
+
+
+@pytest.mark.parametrize(("mood", "suggests_jev"), [(Mood.MORNING, True), (Mood.MELLOW, True), (Mood.DRIVE, False)])
+def test_shortfall_suggests_jev_for_brightness_moods(
+    make_track: TrackFactory, make_classification: ClassificationFactory, mood: Mood, suggests_jev: bool
+) -> None:
+    # どの雰囲気でも主属性が判定保留になる（リラックス度だけ判定済みの）曲を用意する
+    candidates = [Candidate(make_track(), make_classification(relaxation=0.5), None) for _ in range(3)]
+
+    result = generate_playlist(candidates, PlaylistRequest(mood, duration_min=None, track_count=3), DEFAULTS)
+
+    assert result.shortfall is not None
+    assert any("Jev" in s for s in result.shortfall.suggestions) is suggests_jev
 
 
 def test_suitability_of_unclassified_track_is_none() -> None:

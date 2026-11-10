@@ -72,12 +72,23 @@ ATTRIBUTE_LABELS: dict[Attribute, str] = {
 
 
 class Mood(StrEnum):
-    """プレイリストの雰囲気。OMAKASE は生成時のみ使い、分類結果には現れない。"""
+    """プレイリストの雰囲気。
+
+    分類結果のムード（1 曲に 1 つ決めるもの）に使うのは `classify.base.MOOD_COMPONENTS` にあるものだけ。
+    それ以外はプレイリスト生成でのみ選べる。似た雰囲気どうしを曲ごとに判定すると差がつかず判定保留が増えるため、
+    分類結果のムードは大まかな区分にとどめている。OMAKASE は雰囲気で絞り込まないことを表す。
+    """
 
     RELAX = "relax"
     FOCUS = "focus"
     ENERGETIC = "energetic"
     CALM_NIGHT = "calm_night"
+    MORNING = "morning"
+    CAFE = "cafe"
+    DRIVE = "drive"
+    WORKOUT = "workout"
+    MELLOW = "mellow"
+    SLEEP = "sleep"
     OMAKASE = "omakase"
 
 
@@ -86,6 +97,12 @@ MOOD_LABELS: dict[Mood, str] = {
     Mood.FOCUS: "集中・作業",
     Mood.ENERGETIC: "元気",
     Mood.CALM_NIGHT: "穏やかな夜",
+    Mood.MORNING: "朝・爽やか",
+    Mood.CAFE: "カフェ・ほっと一息",
+    Mood.DRIVE: "ドライブ",
+    Mood.WORKOUT: "ワークアウト",
+    Mood.MELLOW: "しっとり・切ない",
+    Mood.SLEEP: "入眠",
     Mood.OMAKASE: "おまかせ",
 }
 
