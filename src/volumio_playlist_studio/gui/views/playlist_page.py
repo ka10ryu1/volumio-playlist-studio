@@ -17,6 +17,7 @@ from volumio_playlist_studio.gui.views import custom_mood_panel, mood_map_panel,
 from volumio_playlist_studio.gui.widgets import format_duration, genre_label, track_label
 from volumio_playlist_studio.models import CLASSIFICATION_SOURCE_LABELS, MOOD_LABELS, CustomMood, Genre, Mood
 from volumio_playlist_studio.mood_map import (
+    DISPLAY_SCALE,
     MOOD_POSITIONS,
     CircleRequest,
     generate_circle_playlist,
@@ -136,7 +137,7 @@ def render(ctx: PageContext) -> None:
     # 円で選ぶ場合は、条件の欄の中にマップを描く
     if st.session_state.get(_METHOD_KEY) != CreationMethod.CIRCLE:
         with st.expander("雰囲気マップ"):
-            mood_map_panel.render(candidates, custom_moods)
+            mood_map_panel.render(candidates, custom_moods, selected=st.session_state.get(_MOOD_KEY))
 
     if request is not None:
         _generate(candidates, request, defaults)
@@ -167,7 +168,8 @@ def _conditions_panel(
         _METHOD_KEY: CreationMethod.MOOD,
         "pl_duration": defaults.default_duration_min,
         "pl_count": 15,
-        "pl_radius": defaults.default_circle_radius,
+        # 半径は画面の表示（0〜10）に合わせた値で持つ
+        "pl_radius": defaults.default_circle_radius * DISPLAY_SCALE,
         "pl_novelty": 0.3,
         "pl_randomness": 0.3,
         "pl_artist": True,
@@ -240,14 +242,17 @@ def _circle_conditions(
     with st.expander("自由記述で雰囲気を作る（Jev を使用）"):
         custom_mood_panel.render(ctx, custom_moods)
 
-    radius = st.slider(
+    shown_radius = st.slider(
         "円の大きさ（半径）",
-        defaults.min_circle_radius,
-        defaults.max_circle_radius,
-        step=0.05,
+        defaults.min_circle_radius * DISPLAY_SCALE,
+        defaults.max_circle_radius * DISPLAY_SCALE,
+        step=0.5,
+        format="%.1f",
         key="pl_radius",
-        help="マップの縦横はそれぞれ 0〜1 です。円の中の曲を、明るさとエネルギー感の位置だけで選びます。",
+        help=f"マップの縦横はそれぞれ 0〜{DISPLAY_SCALE} です。円の中の曲を、明るさとエネルギー感の位置で選びます。",
     )
+    # 表示の倍率で割ったときの誤差で、範囲の検証に失敗しないよう丸める
+    radius = round(shown_radius / DISPLAY_SCALE, 4)
     # 上限などの入力を読んでから、選ばれる曲を描く
     map_area = st.container()
     cap = st.radio("上限", [_CAP_NONE, _CAP_DURATION, _CAP_COUNT], horizontal=True, key="pl_cap")
@@ -260,7 +265,7 @@ def _circle_conditions(
     if center is not None and (options.genre_mode == GenreMode.ALL or options.genres):
         request = CircleRequest(
             mood=center,
-            radius=float(radius),
+            radius=radius,
             duration_min=duration if cap == _CAP_DURATION else None,
             track_count=count if cap == _CAP_COUNT else None,
             genre_mode=options.genre_mode,
@@ -275,12 +280,12 @@ def _circle_conditions(
 
     with map_area:
         if request is None:
-            mood_map_panel.render(candidates, custom_moods)
+            mood_map_panel.render(candidates, custom_moods, selected=center)
         else:
             # 入力のたびに再実行されるため、曲順の調整は行わず、選ばれる曲だけを求める
             chosen = select_circle_tracks(candidates, request, defaults)
             st.markdown(f"**選ばれる曲: {len(chosen)} 曲・合計 {format_duration(total_duration(chosen))}**")
-            mood_map_panel.render(candidates, custom_moods, (request, chosen))
+            mood_map_panel.render(candidates, custom_moods, (request, chosen), selected=center)
 
     if not _generate_button():
         return None
@@ -453,7 +458,7 @@ def _draft_editor(candidates: list[Candidate], result: Result) -> None:
     draft: list[SelectedTrack] = st.session_state.get(_DRAFT_KEY, [])
     request = result.request
     if isinstance(request, CircleRequest):
-        note = f"（マップの円・半径 {request.radius:.2f}）"
+        note = f"（マップの円・半径 {request.radius * DISPLAY_SCALE:.1f}）"
         score_label = "中心への近さ"
     else:
         note = "（条件を緩和）" if request.relaxed else ""

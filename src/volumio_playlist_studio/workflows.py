@@ -18,6 +18,7 @@ from volumio_playlist_studio.classify.runner import RunLimits, classify_tracks, 
 from volumio_playlist_studio.config import JEV_MOOD_QUESTION_VERSION, JEV_QUESTION_VERSION, MoodDecision
 from volumio_playlist_studio.custom_mood import PositionUndeterminedError, estimate_mood, validate_input
 from volumio_playlist_studio.jobs import JobControl, JobError
+from volumio_playlist_studio.mood_map import DISPLAY_SCALE
 from volumio_playlist_studio.scanner import scan_library
 from volumio_playlist_studio.storage import analysis as analysis_store
 from volumio_playlist_studio.storage import settings_store
@@ -234,7 +235,8 @@ def run_custom_mood(
         estimate.output_tokens,
     )
     message = (
-        f"「{name}」をマップに追加しました（明るさ {estimate.point.x:.2f}・エネルギー感 {estimate.point.y:.2f}、"
+        f"「{name}」をマップに追加しました（明るさ {estimate.point.x * DISPLAY_SCALE:.1f}・"
+        f"エネルギー感 {estimate.point.y * DISPLAY_SCALE:.1f}、"
         f"入力 {estimate.input_tokens} / 出力 {estimate.output_tokens} トークン）。"
     )
     if estimate.expressible < settings.expressible_threshold:

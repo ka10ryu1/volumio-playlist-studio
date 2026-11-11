@@ -300,8 +300,9 @@ def test_mood_map_without_brightness_explains_jev(demo: sqlite3.Connection) -> N
     assert any("Jev で判定する" in i.value for i in at.info)
     # 曲がなくても雰囲気の位置は描く
     moods = {row["雰囲気"]: (row["x"], row["y"]) for row in mood_map_values(at) if "雰囲気" in row}
-    assert moods["しっとり・切ない"] == (0.0, 0.3)
-    assert moods["緊迫・スリリング"] == (0.1, 0.95)
+    # 位置は 0〜10 で表示する
+    assert moods["しっとり・切ない"] == (0.0, 3.0)
+    assert moods["緊迫・スリリング"] == (1.0, 9.5)
     assert "穏やかな夜" not in moods
     assert not any("曲名" in row for row in mood_map_values(at))
 
@@ -317,6 +318,61 @@ def test_mood_map_labels_have_background_halo(demo: sqlite3.Connection) -> None:
     assert {m["stroke"] for m in halos} == {"#ffffff"}
     # 縁取りと名前は対になっている
     assert len(text_marks) == 2 * len(halos)
+
+
+# テーマ（.streamlit/config.toml）の主色。選択中の雰囲気はこの色で描く
+PRIMARY_COLOR = "#c7354f"
+
+
+def mood_markers(at: AppTest) -> dict[str, tuple[str, str]]:
+    """雰囲気マップに描いた雰囲気の印を、名前ごとに（形, 色）で返す。"""
+    [chart] = [e for e in at.main if e.type == "vega_lite_chart"]
+    datasets = {d.name: convert_arrow_bytes_to_pandas_df(d.data.data) for d in chart.proto.datasets}
+    markers: dict[str, tuple[str, str]] = {}
+    for layer in json.loads(chart.proto.spec)["layer"]:
+        mark = layer["mark"]
+        if mark["type"] != "point":
+            continue
+
+        for row in datasets[layer["data"]["name"]].to_dict("records"):
+            markers[row["雰囲気"]] = (mark["shape"], mark["color"])
+
+    return markers
+
+
+def test_mood_map_highlights_selected_mood_and_colors_custom_moods(demo: sqlite3.Connection) -> None:
+    save_custom(demo, "雨の午後", 0.3, 0.3)
+    at = run_view("playlist_page")
+    at.radio(key="pl_mood").set_value(Mood.NIGHT_CITY).run()
+
+    markers = mood_markers(at)
+    assert markers["夜の街・クール"] == ("diamond", PRIMARY_COLOR)
+    # 選択していない既存の雰囲気は同じ色、自由記述の雰囲気はそれとも選択中とも違う色で描く
+    preset_colors = {
+        color for name, (shape, color) in markers.items() if shape == "diamond" and name != "夜の街・クール"
+    }
+    assert len(preset_colors) == 1
+    custom_shape, custom_color = markers["雨の午後"]
+    assert custom_shape == "triangle-up"
+    assert custom_color not in preset_colors | {PRIMARY_COLOR}
+    assert any("選択中の雰囲気は色を変えて" in c.value for c in at.caption)
+
+    # おまかせはマップにないため、どれも強調しない
+    at.radio(key="pl_mood").set_value(Mood.OMAKASE).run()
+    assert PRIMARY_COLOR not in {color for _, color in mood_markers(at).values()}
+    assert not any("選択中の雰囲気は色を変えて" in c.value for c in at.caption)
+
+
+def test_mood_map_highlights_custom_mood_selected_as_circle_center(demo: sqlite3.Connection) -> None:
+    mood_id = save_custom(demo, "嵐の夜", 0.1, 0.9)
+    at = run_view("playlist_page")
+    at.radio(key="pl_method").set_value(CreationMethod.CIRCLE).run()
+    at.radio(key="pl_center").set_value(f"custom:{mood_id}").run()
+
+    markers = mood_markers(at)
+    # 形は自由記述の雰囲気のまま、色だけを変える
+    assert markers["嵐の夜"] == ("triangle-up", PRIMARY_COLOR)
+    assert [name for name, (_, color) in markers.items() if color == PRIMARY_COLOR] == ["嵐の夜"]
 
 
 def test_mood_map_shows_tracks_classified_by_jev(demo: sqlite3.Connection) -> None:
@@ -335,7 +391,7 @@ def test_mood_map_shows_tracks_classified_by_jev(demo: sqlite3.Connection) -> No
     assert not at.info
     [placed] = [row for row in mood_map_values(at) if "曲名" in row]
     assert placed["曲名"] == track.display_title
-    assert (placed["x"], placed["y"]) == (0.9, 0.1)
+    assert (placed["x"], placed["y"]) == (9.0, 1.0)
 
 
 def save_jev_positions(conn: sqlite3.Connection, positions: list[tuple[float, float]]) -> None:
@@ -365,7 +421,8 @@ def test_playlist_by_circle_previews_and_saves_conditions(demo: sqlite3.Connecti
     # 上限がなければ円の中を全部選ぶため、意外性・ランダム性は使わない
     assert at.slider(key="pl_novelty").disabled
 
-    at.slider(key="pl_radius").set_value(0.4).run()
+    # 半径は 0〜10 の目盛りで指定し、保存する条件は 0〜1 のまま
+    at.slider(key="pl_radius").set_value(4.0).run()
     assert any(m.value.startswith("**選ばれる曲: 3 曲・合計") for m in at.markdown)
 
     at.radio(key="pl_cap").set_value("曲数").run()
@@ -417,7 +474,7 @@ def test_playlist_by_circle_around_custom_mood(demo: sqlite3.Connection) -> None
     custom_rows = [row for row in mood_map_values(at) if row.get("説明文") == "嵐の夜の説明"]
     # ▲ と名前（縁取りを含む）を、Jev が決めた位置に描く
     assert custom_rows
-    assert {(row["x"], row["y"]) for row in custom_rows} == {(0.1, 0.9)}
+    assert {(row["x"], row["y"]) for row in custom_rows} == {(1.0, 9.0)}
     assert any("▲ は自由記述で作った雰囲気" in c.value for c in at.caption)
 
     click(at, "プレイリストを生成")

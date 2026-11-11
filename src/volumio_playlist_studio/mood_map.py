@@ -29,6 +29,8 @@ from volumio_playlist_studio.playlist import (
 
 X_ATTRIBUTE = Attribute.BRIGHTNESS
 Y_ATTRIBUTE = Attribute.ENERGY
+# 画面では、位置と円の半径をこの倍率で表示する（0〜10）。目盛りを読みやすくするためで、計算と保存は 0〜1 のまま行う
+DISPLAY_SCALE = 10
 
 
 @dataclass(frozen=True)
