@@ -1,4 +1,7 @@
-"""プレイリスト作成画面。条件を指定した生成、編集・保存・Volumio 登録のプレビュー、保存済みの削除を行う。"""
+"""プレイリスト作成画面。
+
+条件を指定した生成、雰囲気マップの表示、編集・保存・Volumio 登録のプレビュー、保存済みの削除を行う。
+"""
 
 import logging
 from dataclasses import replace
@@ -9,7 +12,7 @@ import streamlit as st
 from volumio_playlist_studio.catalog import load_candidates
 from volumio_playlist_studio.config import PlaylistDefaults
 from volumio_playlist_studio.gui.context import PageContext
-from volumio_playlist_studio.gui.views import volumio_panel
+from volumio_playlist_studio.gui.views import mood_map_panel, volumio_panel
 from volumio_playlist_studio.gui.widgets import format_duration, genre_label, track_label
 from volumio_playlist_studio.models import CLASSIFICATION_SOURCE_LABELS, MOOD_LABELS, Genre, Mood
 from volumio_playlist_studio.playlist import (
@@ -89,6 +92,9 @@ def render(ctx: PageContext) -> None:
     st.caption("1 条件を選ぶ → 2 曲を編集 → 3 保存・連携")
     with st.expander("1. 選曲の条件", expanded=_RESULT_KEY not in st.session_state):
         request = _conditions_panel(defaults, ctx)
+
+    with st.expander("雰囲気マップ"):
+        mood_map_panel.render(candidates)
 
     if request is not None:
         _generate(candidates, request, defaults)

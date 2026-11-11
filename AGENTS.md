@@ -18,6 +18,7 @@
 - ツールの設定は `pyproject.toml` に集約する。リンターや型検査の警告を設定変更や `# noqa` / `# type: ignore` で黙らせない。抑制が正当な場合は、対象を最小限に絞り、理由をコメントで残す
 - 採用したライブラリ（ユーザーの指定に基づく）。これ以外のライブラリを導入するときはユーザーに確認し、この節に追記する
   - GUI: Streamlit（起動: `uv run streamlit run src/volumio_playlist_studio/gui/app.py`）
+  - 雰囲気マップの描画: Altair（Streamlit の依存として導入済みのものを直接使う）
   - タグ取得: mutagen
   - 音響解析: librosa、soundfile
   - AI 判定: TypeSafe Jev（公式 SDK `typesafe-sdk`）

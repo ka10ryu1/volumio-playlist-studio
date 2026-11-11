@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.14"
 resolution-markers = [
     "python_full_version >= '3.15' and sys_platform == 'win32'",
@@ -1869,6 +1869,7 @@ name = "volumio-playlist-studio"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
+    { name = "altair" },
     { name = "librosa" },
     { name = "mutagen" },
     { name = "python-dotenv" },
@@ -1892,6 +1893,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "altair", specifier = ">=6.3.0" },
     { name = "librosa", specifier = ">=1.0.0" },
     { name = "mutagen", specifier = ">=1.48.1" },
     { name = "python-dotenv", specifier = ">=1.2.4" },
