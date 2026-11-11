@@ -16,7 +16,12 @@ from volumio_playlist_studio.gui.context import PageContext
 from volumio_playlist_studio.gui.views import mood_map_panel, volumio_panel
 from volumio_playlist_studio.gui.widgets import format_duration, genre_label, track_label
 from volumio_playlist_studio.models import CLASSIFICATION_SOURCE_LABELS, MOOD_LABELS, Genre, Mood
-from volumio_playlist_studio.mood_map import MOOD_POSITIONS, CircleRequest, generate_circle_playlist
+from volumio_playlist_studio.mood_map import (
+    MOOD_POSITIONS,
+    CircleRequest,
+    generate_circle_playlist,
+    select_circle_tracks,
+)
 from volumio_playlist_studio.playlist import (
     CREATION_METHOD_LABELS,
     GENRE_MODE_LABELS,
@@ -248,11 +253,13 @@ def _circle_conditions(
         )
 
     with map_area:
-        preview = None if request is None else generate_circle_playlist(candidates, request, defaults)
-        if preview is not None:
-            st.markdown(f"**選ばれる曲: {len(preview.tracks)} 曲・合計 {format_duration(preview.total_duration_sec)}**")
-
-        mood_map_panel.render(candidates, preview)
+        if request is None:
+            mood_map_panel.render(candidates)
+        else:
+            # 入力のたびに再実行されるため、曲順の調整は行わず、選ばれる曲だけを求める
+            chosen = select_circle_tracks(candidates, request, defaults)
+            st.markdown(f"**選ばれる曲: {len(chosen)} 曲・合計 {format_duration(total_duration(chosen))}**")
+            mood_map_panel.render(candidates, (request, chosen))
 
     if not _generate_button():
         return None

@@ -422,17 +422,23 @@ def _smooth_order(tracks: list[SelectedTrack], mood: Mood) -> list[SelectedTrack
         relaxation = None if c is None else c.attribute_value(Attribute.RELAXATION)
         return (_NEUTRAL_VALUE if energy is None else energy, _NEUTRAL_VALUE if relaxation is None else relaxation)
 
-    remaining = sorted(tracks, key=lambda t: (point(t)[0], t.track.id))
-    ordered = [remaining.pop(0)]
-    while remaining:
-        last = point(ordered[-1])
-        nearest = min(
-            remaining,
-            key=lambda t: (abs(point(t)[0] - last[0]) + abs(point(t)[1] - last[1]), t.track.id),
-        )
-        remaining.remove(nearest)
-        ordered.append(nearest)
+    # 円で選ぶ場合は数千曲になり得るため、距離の計算は numpy でまとめて行う（曲数の 2 乗の計算量は変わらない）
+    points = np.array([point(t) for t in tracks], dtype=np.float64)
+    track_ids = np.array([t.track.id for t in tracks])
+    used = np.zeros(len(tracks), dtype=bool)
+    current = min(range(len(tracks)), key=lambda i: (points[i, 0], track_ids[i]))
+    order = [current]
+    used[current] = True
+    for _ in range(len(tracks) - 1):
+        gaps = np.abs(points[:, 0] - points[current, 0]) + np.abs(points[:, 1] - points[current, 1])
+        gaps[used] = np.inf
+        # 距離が同じ曲が複数あれば、ID の小さい曲を選ぶ
+        nearest = np.flatnonzero(gaps == gaps.min())
+        current = int(nearest[np.argmin(track_ids[nearest])])
+        order.append(current)
+        used[current] = True
 
+    ordered = [tracks[i] for i in order]
     if mood in _WIND_DOWN_MOODS:
         ordered.reverse()
 

@@ -220,6 +220,26 @@ def generate_circle_playlist(
     Raises:
         ValueError: 条件が不正な場合。
     """
+    selected, warnings = arrange(
+        select_circle_tracks(candidates, request, defaults),
+        request.mood,
+        smooth_order=request.smooth_order,
+        avoid_same_artist=request.avoid_same_artist,
+    )
+    return GenerationResult(request=request, tracks=selected, shortfall=None, warnings=warnings)
+
+
+def select_circle_tracks(
+    candidates: list[Candidate], request: CircleRequest, defaults: PlaylistDefaults
+) -> list[SelectedTrack]:
+    """円の中から選ぶ曲だけを決める。曲順は決めない（中心に近い順に並ぶ）。
+
+    円の大きさを変えるたびに描くプレビュー用。上限がなければ数千曲になり得るため、曲数の 2 乗の時間が
+    かかる曲順の調整（`arrange`）は行わない。選ばれる曲の集合は `generate_circle_playlist` と同じ。
+
+    Raises:
+        ValueError: 条件が不正な場合。
+    """
     request.validate(defaults)
     rng = np.random.default_rng(request.seed)
     allowed_genres = set(request.genres)
@@ -248,13 +268,7 @@ def generate_circle_playlist(
         scored.append((candidate, closeness, closeness + bonus))
 
     chosen = _select_within_cap(ranked_order(scored, request.genre_mode, request.genres), request)
-    selected, warnings = arrange(
-        [SelectedTrack(candidate=c, score=round(s, 4)) for c, s in chosen],
-        request.mood,
-        smooth_order=request.smooth_order,
-        avoid_same_artist=request.avoid_same_artist,
-    )
-    return GenerationResult(request=request, tracks=selected, shortfall=None, warnings=warnings)
+    return [SelectedTrack(candidate=c, score=round(s, 4)) for c, s in chosen]
 
 
 def _select_within_cap(ranked: list[tuple[Candidate, float]], request: CircleRequest) -> list[tuple[Candidate, float]]:

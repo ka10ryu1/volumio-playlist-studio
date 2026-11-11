@@ -24,6 +24,7 @@ from volumio_playlist_studio.mood_map import (
     MapPoint,
     build_track_map,
     generate_circle_playlist,
+    select_circle_tracks,
     track_point,
 )
 from volumio_playlist_studio.playlist import Candidate, GenreMode
@@ -293,3 +294,5 @@ def test_circle_playlist_invariants(candidates: list[Candidate], circle: CircleR
         assert ids(inside) <= set(chosen)
 
     assert generate_circle_playlist(candidates, circle, DEFAULTS).tracks == result.tracks
+    # プレビュー用の選曲（曲順を決めない）も、選ばれる曲は同じ
+    assert sorted(t.track.id for t in select_circle_tracks(candidates, circle, DEFAULTS)) == sorted(chosen)

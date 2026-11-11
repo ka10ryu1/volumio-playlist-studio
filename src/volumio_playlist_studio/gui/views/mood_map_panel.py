@@ -19,7 +19,7 @@ from volumio_playlist_studio.mood_map import (
     TrackMap,
     build_track_map,
 )
-from volumio_playlist_studio.playlist import Candidate, GenerationResult
+from volumio_playlist_studio.playlist import Candidate, SelectedTrack
 
 _X_TITLE = f"{ATTRIBUTE_LABELS[X_ATTRIBUTE]}（左: 暗い・切ない / 右: 明るい・楽しい）"
 _Y_TITLE = f"{ATTRIBUTE_LABELS[Y_ATTRIBUTE]}（下: 静か / 上: 激しい）"
@@ -45,12 +45,15 @@ _LABEL_STYLES: dict[str, tuple[Literal["left", "center", "right"], int, int]] = 
 }
 
 
-def render(candidates: list[Candidate], preview: GenerationResult[CircleRequest] | None = None) -> None:
+type CirclePreview = tuple[CircleRequest, list[SelectedTrack]]
+
+
+def render(candidates: list[Candidate], preview: CirclePreview | None = None) -> None:
     """雰囲気マップを表示する。
 
     Args:
         candidates: 選曲の候補。
-        preview: マップの円で選ぶ場合の、現在の条件での選曲結果。円と選ばれる曲を強調して描く。
+        preview: マップの円で選ぶ場合の、現在の条件と選ばれる曲。円を描き、選ばれる曲を強調する。
     """
     track_map = build_track_map(candidates)
     st.caption(_summary(track_map, preview is not None))
@@ -82,11 +85,11 @@ def _summary(track_map: TrackMap, with_circle: bool) -> str:
     return summary
 
 
-def _chart(track_map: TrackMap, preview: GenerationResult[CircleRequest] | None) -> alt.LayerChart:
+def _chart(track_map: TrackMap, preview: CirclePreview | None) -> alt.LayerChart:
     scale = alt.Scale(domain=[0, 1], nice=False)
     x = alt.X("x:Q", title=_X_TITLE, scale=scale)
     y = alt.Y("y:Q", title=_Y_TITLE, scale=scale)
-    chosen = set() if preview is None else {t.track.id for t in preview.tracks}
+    chosen = set() if preview is None else {t.track.id for t in preview[1]}
     tracks = alt.Chart(
         alt.InlineData(
             values=[
@@ -133,7 +136,7 @@ def _chart(track_map: TrackMap, preview: GenerationResult[CircleRequest] | None)
     ]
     layers: list[alt.Chart] = [tracks, markers, *label_layers]
     if preview is not None:
-        layers.append(_circle_layer(preview.request, x, y))
+        layers.append(_circle_layer(preview[0], x, y))
 
     return alt.LayerChart(layer=layers)
 
