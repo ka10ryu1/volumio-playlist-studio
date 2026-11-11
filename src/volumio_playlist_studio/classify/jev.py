@@ -48,8 +48,9 @@ _GENRE_CRITERIA: dict[str, str] = {
     Genre.OTHER: "A genre that is not covered by any of the other options",
 }
 
-# 属性ごとの質問文と 5 段階の基準。Score の回答（0〜4）を 0〜1 に変換して使う
-_ATTRIBUTE_QUESTIONS: dict[Attribute, tuple[str, list[str]]] = {
+# 属性ごとの質問文と 5 段階の基準。Score の回答（0〜4）を 0〜1 に変換して使う。
+# 基準は自由記述の雰囲気の質問（custom_mood.py）でも使うため、変えた場合は JEV_MOOD_QUESTION_VERSION も更新する
+ATTRIBUTE_QUESTIONS: dict[Attribute, tuple[str, list[str]]] = {
     Attribute.RELAXATION: (
         "How relaxing this track is likely to feel to a listener",
         [
@@ -152,7 +153,7 @@ def build_questions() -> dict[str, Choice | Score | Noul]:
             ),
         ),
     }
-    for attribute, (instructions, criteria) in _ATTRIBUTE_QUESTIONS.items():
+    for attribute, (instructions, criteria) in ATTRIBUTE_QUESTIONS.items():
         questions[attribute.value] = Score(instructions=instructions, criteria=list(criteria))
 
     return questions
@@ -205,7 +206,7 @@ def _parse(response: SystemOneResponse, settings: JevSettings, mood_decision: Mo
         notes.append(f"ジャンルの confidence が低いため不明（{genre_answer.confidence:.2f}）")
 
     attributes: dict[Attribute, AttributeScore] = {}
-    for attribute, (_, criteria) in _ATTRIBUTE_QUESTIONS.items():
+    for attribute, (_, criteria) in ATTRIBUTE_QUESTIONS.items():
         answer = response.scores[attribute.value]
         held = answer.confidence < settings.min_confidence
         attributes[attribute] = AttributeScore(

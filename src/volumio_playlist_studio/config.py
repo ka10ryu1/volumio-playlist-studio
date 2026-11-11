@@ -22,6 +22,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 ANALYSIS_VERSION = "features-1"
 RULE_VERSION = "rules-1"
 JEV_QUESTION_VERSION = "jev-questions-1"
+# 自由記述の雰囲気の質問定義のバージョン。曲の質問とは別に管理し、更新しても曲の再判定の対象にはしない
+JEV_MOOD_QUESTION_VERSION = "jev-mood-questions-1"
 
 # 対応する拡張子。タグ取得は mutagen、音響解析は librosa（soundfile 経由）で行う。
 # M4A/AAC は libsndfile が対応していないため、タグのみ取得し音響解析はエラーとして記録する。
@@ -96,6 +98,8 @@ class JevSettings:
         timeout_sec: 1 リクエストあたりのタイムアウト（秒）。
         min_confidence: これ未満の confidence の回答は判定保留として扱う。
         genre_determinable_threshold: 「ジャンルを判断できる」の確率がこれ未満なら、ジャンルを不明とする。
+        expressible_threshold: 自由記述の雰囲気が「属性だけで表せる」確率がこれ未満なら、
+            表せない要素を含むことを画面で知らせる。
         send_titles: 曲名を Jev に送るか。
         max_tracks_per_run: 1 回の実行で判定する曲数の上限（料金の暴走防止）。
         max_consecutive_failures: 連続して通信に失敗したら実行を打ち切る回数。
@@ -105,6 +109,7 @@ class JevSettings:
     timeout_sec: float = 30.0
     min_confidence: float = 0.5
     genre_determinable_threshold: float = 0.5
+    expressible_threshold: float = 0.5
     send_titles: bool = True
     max_tracks_per_run: int = 20
     max_consecutive_failures: int = 3

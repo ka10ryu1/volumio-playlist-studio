@@ -3,27 +3,45 @@
 各関数は処理結果を画面表示用の日本語の文で返す。
 """
 
+import logging
 import sqlite3
 from dataclasses import dataclass
 from pathlib import Path
 
 import httpx2
+from typesafe_sdk import TypeSafeError
 
 from volumio_playlist_studio.analyzer import analyze_pending, classify_with_rules
 from volumio_playlist_studio.classify.jev import ENGINE_NAME as JEV_ENGINE
-from volumio_playlist_studio.classify.jev import JevClassifier, build_questions, create_client
-from volumio_playlist_studio.classify.runner import RunLimits, classify_tracks
-from volumio_playlist_studio.config import JEV_QUESTION_VERSION, MoodDecision
+from volumio_playlist_studio.classify.jev import JevClassifier, JevResponseError, build_questions, create_client
+from volumio_playlist_studio.classify.runner import RunLimits, classify_tracks, error_summary, fatal_reason
+from volumio_playlist_studio.config import JEV_MOOD_QUESTION_VERSION, JEV_QUESTION_VERSION, MoodDecision
+from volumio_playlist_studio.custom_mood import PositionUndeterminedError, estimate_mood, validate_input
 from volumio_playlist_studio.jobs import JobControl, JobError
 from volumio_playlist_studio.scanner import scan_library
 from volumio_playlist_studio.storage import analysis as analysis_store
 from volumio_playlist_studio.storage import settings_store
+from volumio_playlist_studio.storage.custom_moods import (
+    CustomMoodDraft,
+    DuplicateNameError,
+    list_custom_moods,
+    save_custom_mood,
+)
 from volumio_playlist_studio.storage.database import transaction, utc_now
 from volumio_playlist_studio.storage.playlists import RegistrationRecord, save_registration
 from volumio_playlist_studio.storage.volumio_library import replace_uris
 from volumio_playlist_studio.volumio import PlaylistExistsError, VolumioError, collect_track_uris, register_playlist
 from volumio_playlist_studio.volumio_rest import VolumioRestClient
 from volumio_playlist_studio.volumio_socketio import VolumioLiveClient
+
+logger = logging.getLogger(__name__)
+
+
+# 自由記述の雰囲気が、7 つの属性で表せない要素を含む可能性が高い場合の注意（画面表示用）
+UNEXPRESSIBLE_NOTE = (
+    "説明文には、年代・ボーカル・楽器など、明るさやエネルギー感などの属性では表せない要素が含まれている"
+    "可能性があります。それらは選曲に反映されません。"
+)
 
 
 @dataclass(frozen=True)
@@ -139,6 +157,86 @@ def run_jev(
     )
     if summary.stopped_reason is not None:
         message += f" {summary.stopped_reason}"
+
+    return message
+
+
+def run_custom_mood(
+    conn: sqlite3.Connection,
+    name: str,
+    description: str,
+    transport: httpx2.BaseTransport | None = None,
+) -> str:
+    """説明文から Jev で雰囲気マップ上の位置と属性の値を決め、自由記述の雰囲気として保存する。
+
+    Jev へのリクエストは 1 回（SDK の自動再試行を除く）。名前の重複など、入力で分かる問題は API を呼ぶ前に確認する。
+
+    Args:
+        conn: DB 接続。
+        name: マップに書く名前。
+        description: 雰囲気の説明文。Jev に送るのはこの文だけ。
+        transport: HTTP の送受信を差し替える場合に指定する（テスト用）。
+
+    Raises:
+        JobError: 入力が不正、名前が重複、または Jev の応答から位置を決められなかった場合（画面表示用のメッセージ）。
+        JevUnavailableError: API キーが設定されていない場合。
+    """
+    try:
+        name, description = validate_input(name, description)
+    except ValueError as exc:
+        raise JobError("名前と説明文を入力してください（長すぎる場合は短くしてください）。") from exc
+
+    if any(mood.name == name for mood in list_custom_moods(conn)):
+        raise JobError(f"「{name}」という名前の雰囲気は既にあります。別の名前にしてください。")
+
+    settings = settings_store.get_jev_settings(conn)
+    with create_client(settings, transport=transport) as client:
+        try:
+            estimate = estimate_mood(client, description, settings)
+        except TypeSafeError as exc:
+            # 応答本文には送信した説明文が含まれる可能性があるため、種類とステータスだけを残す
+            logger.warning("custom mood request failed: error=%s", error_summary(exc))
+            reason = fatal_reason(exc) or "Jev との通信に失敗しました。しばらく待ってから、もう一度試してください。"
+            raise JobError(reason) from exc
+        except JevResponseError as exc:
+            raise JobError("Jev の応答の形式が想定と異なるため、雰囲気を作れませんでした。") from exc
+        except PositionUndeterminedError as exc:
+            raise JobError(
+                "Jev が明るさかエネルギー感を決められませんでした（確信度が低い回答）。"
+                "説明文をより具体的にして、もう一度試してください。"
+            ) from exc
+
+    try:
+        with transaction(conn):
+            save_custom_mood(
+                conn,
+                CustomMoodDraft(
+                    name=name,
+                    description=description,
+                    x=estimate.point.x,
+                    y=estimate.point.y,
+                    attributes=estimate.attributes,
+                    expressible=estimate.expressible,
+                    question_version=JEV_MOOD_QUESTION_VERSION,
+                    model=estimate.model,
+                ),
+            )
+    except DuplicateNameError as exc:
+        # 別のタブなどで、問い合わせ中に同じ名前の雰囲気が作られた場合
+        raise JobError(f"「{name}」という名前の雰囲気は既にあります。別の名前にしてください。") from exc
+
+    logger.info(
+        "custom mood created: question_version=%s input_tokens=%d output_tokens=%d",
+        JEV_MOOD_QUESTION_VERSION,
+        estimate.input_tokens,
+        estimate.output_tokens,
+    )
+    message = (
+        f"「{name}」をマップに追加しました（明るさ {estimate.point.x:.2f}・エネルギー感 {estimate.point.y:.2f}、"
+        f"入力 {estimate.input_tokens} / 出力 {estimate.output_tokens} トークン）。"
+    )
+    if estimate.expressible < settings.expressible_threshold:
+        message += f" {UNEXPRESSIBLE_NOTE}"
 
     return message
 

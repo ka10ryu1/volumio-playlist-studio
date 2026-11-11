@@ -55,7 +55,7 @@ class ClassificationRunSummary:
     elapsed_sec: float
 
 
-def _fatal_reason(exc: Exception) -> str | None:
+def fatal_reason(exc: Exception) -> str | None:
     """続けても成功しない失敗なら、画面に表示する理由を返す。"""
     if isinstance(exc, TypeSafeAuthenticationError | TypeSafePermissionDeniedError):
         return "API キーが無効、または権限がありません。設定を確認してください。"
@@ -66,7 +66,8 @@ def _fatal_reason(exc: Exception) -> str | None:
     return None
 
 
-def _error_message(exc: Exception) -> str:
+def error_summary(exc: Exception) -> str:
+    """ログ・エラー記録用に、例外の種類と HTTP ステータスだけを返す。"""
     # 応答本文には送信した state が含まれる可能性があるため、記録するのは種類とステータスだけにする
     if isinstance(exc, TypeSafeAPIError):
         return f"{type(exc).__name__}: status={exc.status}"
@@ -109,14 +110,14 @@ def classify_tracks(
         except (TypeSafeError, JevResponseError) as exc:
             failed += 1
             consecutive_failures += 1
-            error = ErrorRecord("classification", type(exc).__name__, _error_message(exc), classifier.engine_version)
+            error = ErrorRecord("classification", type(exc).__name__, error_summary(exc), classifier.engine_version)
             with transaction(conn):
                 record_error(conn, track.id, error)
 
             logger.warning(
                 "classification failed: engine=%s track_id=%d error=%s", classifier.engine, track.id, error.message
             )
-            stopped_reason = _fatal_reason(exc)
+            stopped_reason = fatal_reason(exc)
             if stopped_reason is None and consecutive_failures >= limits.max_consecutive_failures:
                 stopped_reason = (
                     f"{consecutive_failures} 回連続で失敗したため中断しました。通信状況を確認してください。"

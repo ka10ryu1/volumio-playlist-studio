@@ -190,6 +190,23 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         # プレイリストを削除した日時。満足度・不適切な曲の評価を残すため、行は消さずに一覧から隠す
         "ALTER TABLE playlists ADD COLUMN deleted_at TEXT",
     ),
+    (
+        # 自由記述の雰囲気。説明文から Jev が決めた位置と属性の値を保存し、使うたびに Jev を呼ばずに済むようにする。
+        # 削除しても、作成済みのプレイリストの条件（conditions_json）に名前・説明文・中心の座標が残る
+        """
+        CREATE TABLE custom_moods (
+            id INTEGER PRIMARY KEY,
+            name TEXT NOT NULL UNIQUE,
+            description TEXT NOT NULL,
+            x REAL NOT NULL CHECK (x BETWEEN 0 AND 1),
+            y REAL NOT NULL CHECK (y BETWEEN 0 AND 1),
+            result_json TEXT NOT NULL,
+            question_version TEXT NOT NULL,
+            model TEXT,
+            created_at TEXT NOT NULL
+        )
+        """,
+    ),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)
