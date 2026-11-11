@@ -12,6 +12,7 @@ from volumio_playlist_studio.config import is_typesafe_api_key_set
 from volumio_playlist_studio.custom_mood import MAX_DESCRIPTION_LENGTH, MAX_NAME_LENGTH
 from volumio_playlist_studio.gui.context import PageContext, running_job, start_job
 from volumio_playlist_studio.models import ATTRIBUTE_LABELS, CustomMood
+from volumio_playlist_studio.mood_map import DISPLAY_SCALE
 from volumio_playlist_studio.storage.custom_moods import delete_custom_mood
 from volumio_playlist_studio.storage.database import transaction
 from volumio_playlist_studio.storage.settings_store import get_jev_settings
@@ -87,7 +88,8 @@ def _saved_moods(ctx: PageContext, custom_moods: list[CustomMood]) -> None:
 
     # 説明文は利用者の入力のため、Markdown として解釈させない
     st.text(f"説明文: {mood.description}")
-    st.caption(f"マップ上の位置: 明るさ {mood.x:.2f}・エネルギー感 {mood.y:.2f}（{mood.model or 'モデル不明'}）")
+    position = f"明るさ {mood.x * DISPLAY_SCALE:.1f}・エネルギー感 {mood.y * DISPLAY_SCALE:.1f}"
+    st.caption(f"マップ上の位置: {position}（{mood.model or 'モデル不明'}）")
     if mood.expressible < get_jev_settings(ctx.conn).expressible_threshold:
         st.warning(UNEXPRESSIBLE_NOTE)
 

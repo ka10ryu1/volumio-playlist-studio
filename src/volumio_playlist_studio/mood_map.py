@@ -29,6 +29,8 @@ from volumio_playlist_studio.playlist import (
 
 X_ATTRIBUTE = Attribute.BRIGHTNESS
 Y_ATTRIBUTE = Attribute.ENERGY
+# 画面では、位置と円の半径をこの倍率で表示する（0〜10）。目盛りを読みやすくするためで、計算と保存は 0〜1 のまま行う
+DISPLAY_SCALE = 10
 
 
 @dataclass(frozen=True)
@@ -41,18 +43,20 @@ class MapPoint:
 
 # 明るさ・エネルギー感の目標値を持つ雰囲気は、選曲エンジン（playlist.py）の目標値と同じ位置に置く。
 # 明るさの目標値を持たない雰囲気は、エネルギー感の目標値を縦の位置とし、横の位置は雰囲気の印象から定めた。
-# 「おまかせ」は雰囲気で絞り込まないため、マップには置かない（円の中心にもできない）
+# 「おまかせ」は雰囲気で絞り込まないため、マップには置かない（円の中心にもできない）。
+# 穏やかな夜はプレイリスト生成で選べない（`playlist.PLAYLIST_MOODS`）ため、マップにも置かない
 MOOD_POSITIONS: dict[Mood, MapPoint] = {
     Mood.RELAX: MapPoint(0.6, 0.25),
     Mood.FOCUS: MapPoint(0.5, 0.4),
     Mood.ENERGETIC: MapPoint(0.8, 1.0),
-    Mood.CALM_NIGHT: MapPoint(0.4, 0.15),
     Mood.MORNING: MapPoint(1.0, 0.55),
     Mood.CAFE: MapPoint(0.7, 0.4),
     Mood.DRIVE: MapPoint(0.7, 0.7),
     Mood.WORKOUT: MapPoint(0.6, 1.0),
     Mood.MELLOW: MapPoint(0.0, 0.3),
     Mood.SLEEP: MapPoint(0.5, 0.0),
+    Mood.NIGHT_CITY: MapPoint(0.2, 0.5),
+    Mood.TENSE: MapPoint(0.1, 0.95),
 }
 
 
