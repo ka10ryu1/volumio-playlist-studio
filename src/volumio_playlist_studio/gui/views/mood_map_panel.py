@@ -23,7 +23,11 @@ from volumio_playlist_studio.playlist import Candidate, SelectedTrack
 
 _X_TITLE = f"{ATTRIBUTE_LABELS[X_ATTRIBUTE]}（左: 暗い・切ない / 右: 明るい・楽しい）"
 _Y_TITLE = f"{ATTRIBUTE_LABELS[Y_ATTRIBUTE]}（下: 静か / 上: 激しい）"
-_CHART_HEIGHT = 420
+# 縦軸と横軸の 1 目盛りの長さを揃え、円が楕円に見えないようにする。軸の目盛り・タイトルの分を見込み、
+# 描画領域がほぼ正方形（約 280 ピクセル四方）になる大きさにした。スマートフォンなど幅が足りない場合は
+# 横だけが縮むため、やや縦長になる
+_CHART_WIDTH = 355
+_CHART_HEIGHT = 380
 # 雰囲気の名前は既定では点の右上に書く。スマートフォンの狭い幅でも、図の外にはみ出したり、
 # 同じ高さの雰囲気（ワークアウトと元気、集中・作業とカフェ）の名前と重なったりしないよう、一部は位置を変える
 _LABEL_LEFT = "left"
@@ -43,6 +47,8 @@ _LABEL_STYLES: dict[str, tuple[Literal["left", "center", "right"], int, int]] = 
     _LABEL_LEFT: ("right", -8, -8),
     _LABEL_BELOW: ("center", 0, 16),
 }
+# 名前の下に背景色の縁取りを描き、円の線や曲の点と重なっても読めるようにする（ピクセル）
+_LABEL_HALO_WIDTH = 3
 
 
 type CirclePreview = tuple[CircleRequest, list[SelectedTrack]]
@@ -64,7 +70,7 @@ def render(candidates: list[Candidate], custom_moods: list[CustomMood], preview:
             "音楽ライブラリ画面の「Jev で判定する」で判定した曲だけが載ります。"
         )
 
-    st.altair_chart(_chart(track_map, custom_moods, preview), width="stretch", height=_CHART_HEIGHT)
+    st.altair_chart(_chart(track_map, custom_moods, preview), width=_CHART_WIDTH, height=_CHART_HEIGHT)
 
 
 def _summary(track_map: TrackMap, with_custom_moods: bool, with_circle: bool) -> str:
@@ -135,8 +141,9 @@ def _chart(track_map: TrackMap, custom_moods: list[CustomMood], preview: CircleP
     markers = moods.mark_point(shape="diamond", size=140, filled=True, opacity=1.0)
     labels = moods.encode(text="雰囲気:N")
     label_layers = [
-        labels.transform_filter(alt.datum["名前の位置"] == position).mark_text(align=align, dx=dx, dy=dy)
-        for position, (align, dx, dy) in _LABEL_STYLES.items()
+        layer
+        for position, style in _LABEL_STYLES.items()
+        for layer in _label_layers(labels.transform_filter(alt.datum["名前の位置"] == position), style)
     ]
     layers: list[alt.Chart] = [tracks, markers, *label_layers]
     if custom_moods:
@@ -170,6 +177,18 @@ def _custom_mood_layers(custom_moods: list[CustomMood], x: alt.X, y: alt.Y) -> l
         alt.InlineData(values=[{"x": m.x, "y": m.y, "雰囲気": m.name, "説明文": m.description} for m in custom_moods])
     ).encode(x, y, tooltip=["雰囲気:N", "説明文:N"])
     markers = chart.mark_point(shape="triangle-up", size=140, filled=True, opacity=1.0)
-    align, dx, dy = _LABEL_STYLES[_LABEL_RIGHT]
-    labels = chart.encode(text="雰囲気:N").mark_text(align=align, dx=dx, dy=dy)
-    return [markers, labels]
+    return [markers, *_label_layers(chart.encode(text="雰囲気:N"), _LABEL_STYLES[_LABEL_RIGHT])]
+
+
+def _label_layers(labels: alt.Chart, style: tuple[Literal["left", "center", "right"], int, int]) -> list[alt.Chart]:
+    """名前を書くレイヤーを返す。テーマの背景色が分かる場合は、その色の縁取りを下に重ねる。"""
+    align, dx, dy = style
+    text = labels.mark_text(align=align, dx=dx, dy=dy)
+    background = st.get_option("theme.backgroundColor")
+    if not isinstance(background, str):
+        return [text]
+
+    halo = labels.mark_text(
+        align=align, dx=dx, dy=dy, stroke=background, strokeWidth=_LABEL_HALO_WIDTH, strokeJoin="round"
+    )
+    return [halo, text]
