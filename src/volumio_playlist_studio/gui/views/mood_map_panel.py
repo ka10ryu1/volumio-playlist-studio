@@ -1,6 +1,6 @@
 """プレイリスト作成画面の「雰囲気マップ」。既存の雰囲気と曲を明るさ × エネルギー感の 2 軸に描く。
 
-マップの円で選ぶ場合は、円と、選ばれる曲も描く。
+自由記述の雰囲気（▲）も描く。マップの円で選ぶ場合は、円と、選ばれる曲も描く。
 """
 
 import math
@@ -10,7 +10,7 @@ import altair as alt
 import streamlit as st
 
 from volumio_playlist_studio.gui.widgets import genre_label
-from volumio_playlist_studio.models import ATTRIBUTE_LABELS, MOOD_LABELS, Mood
+from volumio_playlist_studio.models import ATTRIBUTE_LABELS, MOOD_LABELS, CustomMood, Mood
 from volumio_playlist_studio.mood_map import (
     MOOD_POSITIONS,
     X_ATTRIBUTE,
@@ -48,25 +48,26 @@ _LABEL_STYLES: dict[str, tuple[Literal["left", "center", "right"], int, int]] = 
 type CirclePreview = tuple[CircleRequest, list[SelectedTrack]]
 
 
-def render(candidates: list[Candidate], preview: CirclePreview | None = None) -> None:
+def render(candidates: list[Candidate], custom_moods: list[CustomMood], preview: CirclePreview | None = None) -> None:
     """雰囲気マップを表示する。
 
     Args:
         candidates: 選曲の候補。
+        custom_moods: 自由記述の雰囲気。
         preview: マップの円で選ぶ場合の、現在の条件と選ばれる曲。円を描き、選ばれる曲を強調する。
     """
     track_map = build_track_map(candidates)
-    st.caption(_summary(track_map, preview is not None))
+    st.caption(_summary(track_map, bool(custom_moods), preview is not None))
     if not track_map.points:
         st.info(
             "マップに載る曲がありません。明るさはルールベースでは判定しないため、"
             "音楽ライブラリ画面の「Jev で判定する」で判定した曲だけが載ります。"
         )
 
-    st.altair_chart(_chart(track_map, preview), width="stretch", height=_CHART_HEIGHT)
+    st.altair_chart(_chart(track_map, custom_moods, preview), width="stretch", height=_CHART_HEIGHT)
 
 
-def _summary(track_map: TrackMap, with_circle: bool) -> str:
+def _summary(track_map: TrackMap, with_custom_moods: bool, with_circle: bool) -> str:
     excluded = []
     if track_map.held:
         excluded.append(f"明るさかエネルギー感が判定保留 {track_map.held} 曲")
@@ -79,13 +80,16 @@ def _summary(track_map: TrackMap, with_circle: bool) -> str:
         summary += f"載っていない曲: {'、'.join(excluded)}。"
 
     summary += "◆ は雰囲気の位置です。"
+    if with_custom_moods:
+        summary += "▲ は自由記述で作った雰囲気の位置です。"
+
     if with_circle:
         summary += "濃い点が選ばれる曲です（ジャンルの指定・上限・重複の除外を反映）。"
 
     return summary
 
 
-def _chart(track_map: TrackMap, preview: CirclePreview | None) -> alt.LayerChart:
+def _chart(track_map: TrackMap, custom_moods: list[CustomMood], preview: CirclePreview | None) -> alt.LayerChart:
     scale = alt.Scale(domain=[0, 1], nice=False)
     x = alt.X("x:Q", title=_X_TITLE, scale=scale)
     y = alt.Y("y:Q", title=_Y_TITLE, scale=scale)
@@ -135,6 +139,9 @@ def _chart(track_map: TrackMap, preview: CirclePreview | None) -> alt.LayerChart
         for position, (align, dx, dy) in _LABEL_STYLES.items()
     ]
     layers: list[alt.Chart] = [tracks, markers, *label_layers]
+    if custom_moods:
+        layers += _custom_mood_layers(custom_moods, x, y)
+
     if preview is not None:
         layers.append(_circle_layer(preview[0], x, y))
 
@@ -155,3 +162,14 @@ def _circle_layer(request: CircleRequest, x: alt.X, y: alt.Y) -> alt.Chart:
     # Altair の型定義では mark_line の戻り値が Any になるため、Chart として受ける。マップの外にはみ出す部分は描かない
     line: alt.Chart = alt.Chart(alt.InlineData(values=vertices)).mark_line(clip=True, strokeDash=[6, 4])
     return line.encode(x, y, order="order:Q")
+
+
+def _custom_mood_layers(custom_moods: list[CustomMood], x: alt.X, y: alt.Y) -> list[alt.Chart]:
+    """自由記述の雰囲気を ▲ で描き、名前を点の右上に書く。説明文はカーソルを合わせたときに表示する。"""
+    chart = alt.Chart(
+        alt.InlineData(values=[{"x": m.x, "y": m.y, "雰囲気": m.name, "説明文": m.description} for m in custom_moods])
+    ).encode(x, y, tooltip=["雰囲気:N", "説明文:N"])
+    markers = chart.mark_point(shape="triangle-up", size=140, filled=True, opacity=1.0)
+    align, dx, dy = _LABEL_STYLES[_LABEL_RIGHT]
+    labels = chart.encode(text="雰囲気:N").mark_text(align=align, dx=dx, dy=dy)
+    return [markers, labels]

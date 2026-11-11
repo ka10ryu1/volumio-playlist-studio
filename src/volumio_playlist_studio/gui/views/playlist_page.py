@@ -13,9 +13,9 @@ import streamlit as st
 from volumio_playlist_studio.catalog import load_candidates
 from volumio_playlist_studio.config import PlaylistDefaults
 from volumio_playlist_studio.gui.context import PageContext
-from volumio_playlist_studio.gui.views import mood_map_panel, volumio_panel
+from volumio_playlist_studio.gui.views import custom_mood_panel, mood_map_panel, volumio_panel
 from volumio_playlist_studio.gui.widgets import format_duration, genre_label, track_label
-from volumio_playlist_studio.models import CLASSIFICATION_SOURCE_LABELS, MOOD_LABELS, Genre, Mood
+from volumio_playlist_studio.models import CLASSIFICATION_SOURCE_LABELS, MOOD_LABELS, CustomMood, Genre, Mood
 from volumio_playlist_studio.mood_map import (
     MOOD_POSITIONS,
     CircleRequest,
@@ -37,6 +37,7 @@ from volumio_playlist_studio.playlist import (
     remove_item,
     total_duration,
 )
+from volumio_playlist_studio.storage.custom_moods import list_custom_moods
 from volumio_playlist_studio.storage.database import transaction
 from volumio_playlist_studio.storage.playlists import (
     PlaylistDraft,
@@ -58,6 +59,8 @@ _SAVED_KEY = "pl_saved_id"
 _SAVED_NAME_KEY = "pl_saved_name"
 _DELETED_NAME_KEY = "pl_deleted_name"
 _SEED_KEY = "pl_seed"
+# 円の中心の選択肢のうち、自由記述の雰囲気を表す値の接頭辞（既存の雰囲気は Mood の値そのもの）
+_CUSTOM_CENTER_PREFIX = "custom:"
 _MAX_SEED = 1_000_000
 _SECONDS_PER_MINUTE = 60
 _CAP_NONE = "なし"
@@ -124,14 +127,15 @@ def render(ctx: PageContext) -> None:
 
     defaults = PlaylistDefaults()
     candidates = load_candidates(ctx.conn, ctx.library_root, ctx.classification_source)
+    custom_moods = list_custom_moods(ctx.conn)
     st.caption("1 条件を選ぶ → 2 曲を編集 → 3 保存・連携")
     with st.expander("1. 選曲の条件", expanded=_RESULT_KEY not in st.session_state):
-        request = _conditions_panel(defaults, ctx, candidates)
+        request = _conditions_panel(defaults, ctx, candidates, custom_moods)
 
     # 円で選ぶ場合は、条件の欄の中にマップを描く
     if st.session_state.get(_METHOD_KEY) != CreationMethod.CIRCLE:
         with st.expander("雰囲気マップ"):
-            mood_map_panel.render(candidates)
+            mood_map_panel.render(candidates, custom_moods)
 
     if request is not None:
         _generate(candidates, request, defaults)
@@ -151,7 +155,9 @@ def render(ctx: PageContext) -> None:
     _saved_playlists_section(ctx)
 
 
-def _conditions_panel(defaults: PlaylistDefaults, ctx: PageContext, candidates: list[Candidate]) -> Request | None:
+def _conditions_panel(
+    defaults: PlaylistDefaults, ctx: PageContext, candidates: list[Candidate], custom_moods: list[CustomMood]
+) -> Request | None:
     # 入力は都度セッションに反映する。曲の編集やページ移動で、未生成の条件も失わないようにする。
     if _SEED_KEY not in st.session_state:
         st.session_state[_SEED_KEY] = int(datetime.now().timestamp()) % _MAX_SEED
@@ -178,7 +184,7 @@ def _conditions_panel(defaults: PlaylistDefaults, ctx: PageContext, candidates: 
             key=_METHOD_KEY,
         )
         if method == CreationMethod.CIRCLE:
-            return _circle_conditions(defaults, ctx, candidates)
+            return _circle_conditions(defaults, ctx, candidates, custom_moods)
 
         return _mood_conditions(defaults, ctx)
 
@@ -215,12 +221,24 @@ def _mood_conditions(defaults: PlaylistDefaults, ctx: PageContext) -> PlaylistRe
 
 
 def _circle_conditions(
-    defaults: PlaylistDefaults, ctx: PageContext, candidates: list[Candidate]
+    defaults: PlaylistDefaults, ctx: PageContext, candidates: list[Candidate], custom_moods: list[CustomMood]
 ) -> CircleRequest | None:
-    centers = [mood for mood in Mood if mood in MOOD_POSITIONS]
-    center = st.radio(
-        "円の中心（雰囲気）", centers, format_func=MOOD_LABELS.__getitem__, horizontal=True, key=_CENTER_KEY
+    centers = _center_options(custom_moods)
+    # 削除した自由記述の雰囲気が選択されたまま残らないようにする
+    if st.session_state.get(_CENTER_KEY) not in centers:
+        st.session_state.pop(_CENTER_KEY, None)
+
+    selected = st.radio(
+        "円の中心（雰囲気）",
+        list(centers),
+        format_func=lambda key: _center_label(centers[key]),
+        horizontal=True,
+        key=_CENTER_KEY,
     )
+    center = None if selected is None else centers[selected]
+    with st.expander("自由記述で雰囲気を作る（Jev を使用）"):
+        custom_mood_panel.render(ctx, custom_moods)
+
     radius = st.slider(
         "円の大きさ（半径）",
         defaults.min_circle_radius,
@@ -254,12 +272,12 @@ def _circle_conditions(
 
     with map_area:
         if request is None:
-            mood_map_panel.render(candidates)
+            mood_map_panel.render(candidates, custom_moods)
         else:
             # 入力のたびに再実行されるため、曲順の調整は行わず、選ばれる曲だけを求める
             chosen = select_circle_tracks(candidates, request, defaults)
             st.markdown(f"**選ばれる曲: {len(chosen)} 曲・合計 {format_duration(total_duration(chosen))}**")
-            mood_map_panel.render(candidates, (request, chosen))
+            mood_map_panel.render(candidates, custom_moods, (request, chosen))
 
     if not _generate_button():
         return None
@@ -272,6 +290,19 @@ def _circle_conditions(
         return None
 
     return request
+
+
+def _center_options(custom_moods: list[CustomMood]) -> dict[str, Mood | CustomMood]:
+    """円の中心の選択肢。セッションに保存する値は文字列にし、ページ移動や削除の後も比較できるようにする。"""
+    options: dict[str, Mood | CustomMood] = {mood.value: mood for mood in Mood if mood in MOOD_POSITIONS}
+    for mood in custom_moods:
+        options[f"{_CUSTOM_CENTER_PREFIX}{mood.id}"] = mood
+
+    return options
+
+
+def _center_label(mood: Mood | CustomMood) -> str:
+    return mood.name if isinstance(mood, CustomMood) else MOOD_LABELS[mood]
 
 
 def _length_inputs(defaults: PlaylistDefaults) -> tuple[int, int]:
@@ -382,7 +413,7 @@ def _generate(candidates: list[Candidate], request: Request, defaults: PlaylistD
 def _playlist_title(request: Request) -> str:
     """プレイリストの既定の名前と見出しに使う、条件の短い説明。"""
     if isinstance(request, CircleRequest):
-        return f"{MOOD_LABELS[request.mood]}周辺"
+        return f"{_center_label(request.mood)}周辺"
 
     return MOOD_LABELS[request.mood]
 
