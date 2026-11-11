@@ -4,22 +4,32 @@
 モッククライアントを使う。
 """
 
+import json
 import sqlite3
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
+from streamlit.dataframe_util import convert_arrow_bytes_to_pandas_df
 from streamlit.proto.SelectWidgetFilterMode_pb2 import SelectWidgetFilterMode
 from streamlit.testing.v1 import AppTest
 from test_volumio_rest import FakeVolumio
 from test_volumio_socketio import FakeSocketIO
 
 from volumio_playlist_studio.jobs import BackgroundJob
-from volumio_playlist_studio.models import ClassificationSource, Genre, Mood
+from volumio_playlist_studio.models import (
+    Attribute,
+    AttributeScore,
+    ClassificationResult,
+    ClassificationSource,
+    Genre,
+    Mood,
+)
 from volumio_playlist_studio.playlist import GenreMode
 from volumio_playlist_studio.sample_data import DEMO_LIBRARY_ROOT, generate_sample_audio, load_demo_library
 from volumio_playlist_studio.scanner import scan_library
 from volumio_playlist_studio.storage import settings_store
+from volumio_playlist_studio.storage.analysis import save_classification
 from volumio_playlist_studio.storage.database import connect, transaction
 from volumio_playlist_studio.storage.evaluations import Verdict, load_labels
 from volumio_playlist_studio.storage.playlists import list_playlists, list_registrations, set_feedback
@@ -260,6 +270,52 @@ def test_playlist_offers_ten_moods_and_suggests_jev_for_morning(demo: sqlite3.Co
     click(at, "プレイリストを生成")
 
     assert any("条件に合う曲が足りません" in w.value and "Jev で判定する" in w.value for w in at.warning)
+
+
+def mood_map_values(at: AppTest) -> list[dict[str, object]]:
+    """雰囲気マップの各レイヤーに渡したデータを、まとめて返す。"""
+    [chart] = [e for e in at.main if e.type == "vega_lite_chart"]
+    spec = json.loads(chart.proto.spec)
+    # Streamlit は各レイヤーのデータを Arrow 形式に変換し、名前で参照させる
+    datasets = {d.name: convert_arrow_bytes_to_pandas_df(d.data.data) for d in chart.proto.datasets}
+    rows: list[dict[str, object]] = []
+    for layer in spec["layer"]:
+        rows.extend(datasets[layer["data"]["name"]].to_dict("records"))
+
+    return rows
+
+
+def test_mood_map_without_brightness_explains_jev(demo: sqlite3.Connection) -> None:
+    # デモデータはルールベースの判定だけで、明るさが判定保留のため、曲はマップに載らない
+    at = run_view("playlist_page")
+
+    total = len(list_tracks(demo, DEMO_LIBRARY_ROOT))
+    assert any(f"マップに載っている曲: 0 曲。載っていない曲: 明るさかエネルギー感が判定保留 {total} 曲" in c.value
+               for c in at.caption)  # fmt: skip
+    assert any("Jev で判定する" in i.value for i in at.info)
+    # 曲がなくても雰囲気の位置は描く
+    moods = {row["雰囲気"]: (row["x"], row["y"]) for row in mood_map_values(at) if "雰囲気" in row}
+    assert moods["しっとり・切ない"] == (0.0, 0.3)
+    assert not any("曲名" in row for row in mood_map_values(at))
+
+
+def test_mood_map_shows_tracks_classified_by_jev(demo: sqlite3.Connection) -> None:
+    track = list_tracks(demo, DEMO_LIBRARY_ROOT)[0]
+    jev = ClassificationResult(
+        engine="jev", engine_version="jev-test", model=None, genre=Genre.ROCK, genre_confidence=None,
+        genre_probabilities=None, mood=None,
+        attributes={Attribute.BRIGHTNESS: AttributeScore(0.9), Attribute.ENERGY: AttributeScore(0.1)},
+    )  # fmt: skip
+    with transaction(demo):
+        save_classification(demo, track.id, jev)
+
+    at = run_view("playlist_page")
+
+    assert any(c.value.startswith("マップに載っている曲: 1 曲。") for c in at.caption)
+    assert not at.info
+    [placed] = [row for row in mood_map_values(at) if "曲名" in row]
+    assert placed["曲名"] == track.display_title
+    assert (placed["x"], placed["y"]) == (0.9, 0.1)
 
 
 def test_playlist_requires_genres_when_filtering(demo: sqlite3.Connection) -> None:
