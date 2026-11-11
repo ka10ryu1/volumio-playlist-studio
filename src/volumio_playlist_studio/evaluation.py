@@ -15,6 +15,7 @@ import numpy as np
 
 from volumio_playlist_studio.config import RATING_MAX, RATING_MIN, EvaluationDefaults
 from volumio_playlist_studio.models import Attribute, ClassificationResult, Genre, Mood, Track
+from volumio_playlist_studio.playlist import CreationMethod
 from volumio_playlist_studio.storage.evaluations import EvaluationLabel, Split, Verdict
 from volumio_playlist_studio.storage.playlists import SavedPlaylist
 
@@ -69,9 +70,15 @@ class EngineMetrics:
 
 @dataclass(frozen=True)
 class PlaylistFeedbackMetrics:
-    """保存済みプレイリストへのフィードバックの集計。"""
+    """保存済みプレイリストへのフィードバックの集計。
+
+    Attributes:
+        source: 選曲に使った分類結果の種類。
+        method: 作成方法（`CreationMethod` の値）。
+    """
 
     source: str
+    method: str
     playlists: int
     tracks: int
     unsuitable: int
@@ -221,18 +228,24 @@ def compute_engine_metrics(
 
 
 def playlist_feedback_metrics(playlists: list[SavedPlaylist]) -> list[PlaylistFeedbackMetrics]:
-    """分類結果の種類ごとに、プレイリストへのフィードバックを集計する。満足度の入力がないプレイリストは除く。"""
-    groups: dict[str, list[SavedPlaylist]] = {}
+    """分類結果の種類と作成方法の組ごとに、プレイリストへのフィードバックを集計する。
+
+    満足度の入力がないプレイリストは除く。作成方法を記録する前に保存したプレイリストは、
+    当時唯一の作成方法だった「雰囲気と長さで選ぶ」として数える。
+    """
+    groups: dict[tuple[str, str], list[SavedPlaylist]] = {}
     for playlist in playlists:
         if playlist.satisfaction is not None:
-            groups.setdefault(playlist.classification_source, []).append(playlist)
+            method = str(playlist.conditions.get("method", CreationMethod.MOOD.value))
+            groups.setdefault((playlist.classification_source, method), []).append(playlist)
 
     result = []
-    for source, items in sorted(groups.items()):
+    for (source, method), items in sorted(groups.items()):
         satisfactions = [p.satisfaction for p in items if p.satisfaction is not None]
         result.append(
             PlaylistFeedbackMetrics(
                 source=source,
+                method=method,
                 playlists=len(items),
                 tracks=sum(len(p.entries) for p in items),
                 unsuitable=sum(1 for p in items for e in p.entries if e.unsuitable),

@@ -133,6 +133,23 @@ def test_playlist_feedback_metrics() -> None:
     assert metrics[0].mean_satisfaction == 3.0
 
 
+def test_playlist_feedback_metrics_are_split_by_creation_method() -> None:
+    def playlist(pid: int, conditions: dict[str, object], satisfaction: int) -> SavedPlaylist:
+        return SavedPlaylist(pid, "p", conditions, 0, "jev", 0.0, satisfaction, "now", [PlaylistEntry(pid, None)])
+
+    metrics = playlist_feedback_metrics(
+        [
+            playlist(1, {"method": "circle", "radius": 0.25}, 5),
+            playlist(2, {"method": "mood"}, 2),
+            # 作成方法を記録する前のプレイリストは「雰囲気と長さで選ぶ」として数える
+            playlist(3, {"mood": "relax"}, 4),
+        ]
+    )
+
+    by_method = {m.method: (m.source, m.playlists, m.mean_satisfaction) for m in metrics}
+    assert by_method == {"circle": ("jev", 1, 5.0), "mood": ("jev", 2, 3.0)}
+
+
 def test_export_csv(make_track: TrackFactory, make_classification: ClassificationFactory) -> None:
     track = make_track(title='=HYPERLINK("x")', artist="日本語の歌手", genre="ジャズ")
     labels = {
