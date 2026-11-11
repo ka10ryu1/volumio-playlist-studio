@@ -1,7 +1,9 @@
 """自由記述の雰囲気のテスト。Jev とは通信せず、HTTP の送受信だけを httpx2.MockTransport で差し替える。"""
 
 import json
+import logging
 import sqlite3
+from pathlib import Path
 
 import httpx2
 import pytest
@@ -23,7 +25,7 @@ from volumio_playlist_studio.custom_mood import (
     estimate_mood,
     validate_input,
 )
-from volumio_playlist_studio.jobs import JobError
+from volumio_playlist_studio.jobs import BackgroundJob, JobControl, JobError, JobState
 from volumio_playlist_studio.models import Attribute, AttributeScore
 from volumio_playlist_studio.mood_map import MapPoint
 from volumio_playlist_studio.storage.custom_moods import (
@@ -33,7 +35,7 @@ from volumio_playlist_studio.storage.custom_moods import (
     list_custom_moods,
     save_custom_mood,
 )
-from volumio_playlist_studio.storage.database import transaction
+from volumio_playlist_studio.storage.database import connect, transaction
 from volumio_playlist_studio.workflows import UNEXPRESSIBLE_NOTE, run_custom_mood
 
 ATTRIBUTE_KEYS = {a.value for a in Attribute}
@@ -316,3 +318,26 @@ def test_run_custom_mood_requires_api_key(db: sqlite3.Connection) -> None:
     # conftest で TYPESAFE_API_KEY を空にしている
     with pytest.raises(JevUnavailableError):
         run_custom_mood(db, "雨の午後", DESCRIPTION)
+
+
+def test_failed_request_does_not_log_description(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    # エラー応答の本文に説明文が含まれていても、ジョブの境界までログに出さない
+    path = tmp_path / "studio.sqlite3"
+    connect(path).close()
+    leaky = Recorder([lambda _: httpx2.Response(400, json={"error": f"invalid state: {DESCRIPTION}"})])
+
+    def work(_control: JobControl) -> object:
+        conn = connect(path)
+        try:
+            return run_custom_mood(conn, "雨の午後", DESCRIPTION, transport=transport(leaky))
+        finally:
+            conn.close()
+
+    job = BackgroundJob(name="雰囲気の作成")
+    with caplog.at_level(logging.INFO):
+        job.start(work)
+        job.join(timeout=30)
+
+    assert job.state == JobState.FAILED
+    assert "status=400" in caplog.text
+    assert DESCRIPTION not in caplog.text

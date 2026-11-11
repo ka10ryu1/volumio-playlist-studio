@@ -197,7 +197,9 @@ def run_custom_mood(
             # 応答本文には送信した説明文が含まれる可能性があるため、種類とステータスだけを残す
             logger.warning("custom mood request failed: error=%s", error_summary(exc))
             reason = fatal_reason(exc) or "Jev との通信に失敗しました。しばらく待ってから、もう一度試してください。"
-            raise JobError(reason) from exc
+            # ジョブの境界（jobs.BackgroundJob）は原因の例外を repr でログに出す。SDK の例外の repr には
+            # 応答本文が含まれるため、原因には繋がない（種類とステータスは上でログに残した）
+            raise JobError(reason) from None
         except JevResponseError as exc:
             raise JobError("Jev の応答の形式が想定と異なるため、雰囲気を作れませんでした。") from exc
         except PositionUndeterminedError as exc:
