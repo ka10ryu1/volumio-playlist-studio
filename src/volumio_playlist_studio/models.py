@@ -336,6 +336,35 @@ class ClassificationResult:
             raise ValueError("invalid classification data") from exc
 
 
+@dataclass(frozen=True)
+class CustomMood:
+    """保存済みの自由記述の雰囲気。
+
+    Attributes:
+        id: DB の ID。
+        name: マップに書く名前。
+        description: 利用者が書いた説明文。
+        x: 雰囲気マップの横の位置（明るさ、0〜1）。Jev が説明文から決めた値。
+        y: 雰囲気マップの縦の位置（エネルギー感、0〜1）。Jev が説明文から決めた値。
+        attributes: 7 つの属性の値（参考として表示する。円で選ぶときは使わない）。
+        expressible: 説明文の要素を 7 つの属性だけで表せる確率（0〜1）。
+        question_version: 位置を決めたときの質問定義のバージョン。
+        model: 応答したモデル名。
+        created_at: 作成日時。
+    """
+
+    id: int
+    name: str
+    description: str
+    x: float
+    y: float
+    attributes: dict[Attribute, AttributeScore]
+    expressible: float
+    question_version: str
+    model: str | None
+    created_at: str
+
+
 class ClassificationSource(StrEnum):
     """プレイリスト生成に使う分類結果の種類。"""
 

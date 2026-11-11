@@ -13,6 +13,7 @@ from volumio_playlist_studio.models import (
     Attribute,
     AttributeScore,
     ClassificationResult,
+    CustomMood,
     Genre,
     Mood,
     TitleSource,
@@ -34,6 +35,15 @@ DEFAULTS = PlaylistDefaults()
 CENTER = MOOD_POSITIONS[Mood.RELAX]
 
 Placer = Callable[..., Candidate]
+
+
+def custom_mood(x: float, y: float, mood_id: int = 1) -> CustomMood:
+    """自由記述の雰囲気（架空）。"""
+    return CustomMood(
+        id=mood_id, name="雨の午後", description="雨の日曜の午後、本を読みながら", x=x, y=y,
+        attributes={Attribute.BRIGHTNESS: AttributeScore(x, confidence=0.8), Attribute.ENERGY: AttributeScore(y)},
+        expressible=0.9, question_version="jev-mood-test", model="jev-test", created_at="2026-11-11T00:00:00+00:00",
+    )  # fmt: skip
 
 
 def test_every_mood_except_omakase_has_position_within_map() -> None:
@@ -187,10 +197,54 @@ def test_circle_center_is_mood_position() -> None:
     assert CircleRequest(Mood.MELLOW, radius=0.25).center == MapPoint(0.0, 0.3)
 
 
+def test_circle_center_can_be_custom_mood_position(
+    make_track: TrackFactory, make_classification: ClassificationFactory
+) -> None:
+    def at(x: float, y: float) -> Candidate:
+        classification = make_classification(engine="jev", brightness=x, energy=y)
+        return Candidate(make_track(), classification, classification.genre)
+
+    # 自由記述の雰囲気の位置（0.1, 0.9）の周りだけを選び、既存の雰囲気の位置は使わない
+    near_custom = at(0.15, 0.85)
+    near_relax = at(0.6, 0.25)
+    request = CircleRequest(custom_mood(0.1, 0.9), radius=0.1)
+
+    result = generate_circle_playlist([near_custom, near_relax], request, DEFAULTS)
+
+    assert request.center == MapPoint(0.1, 0.9)
+    assert [t.track.id for t in result.tracks] == [near_custom.track.id]
+
+
+def test_custom_mood_circle_orders_from_low_energy_without_winding_down(
+    make_track: TrackFactory, make_classification: ClassificationFactory
+) -> None:
+    # 自由記述の雰囲気は、リラックスなどのように終盤に向けて落ち着かせる並びにしない
+    def at(energy: float) -> Candidate:
+        classification = make_classification(engine="jev", brightness=0.5, energy=energy, relaxation=0.5)
+        return Candidate(make_track(), classification, classification.genre)
+
+    high, low, middle = at(0.6), at(0.4), at(0.5)
+    custom = CircleRequest(custom_mood(0.5, 0.5), radius=0.25)
+    unsmoothed = CircleRequest(custom_mood(0.5, 0.5), radius=0.25, smooth_order=False)
+
+    ordered = generate_circle_playlist([high, low, middle], custom, DEFAULTS).tracks
+    unordered = generate_circle_playlist([high, low, middle], unsmoothed, DEFAULTS).tracks
+
+    assert [t.track.id for t in ordered] == ids_in_order([low, middle, high])
+    # 曲順の調整をしない場合は中心に近い順
+    assert unordered[0].track.id == middle.track.id
+
+
+def ids_in_order(candidates: list[Candidate]) -> list[int]:
+    return [c.track.id for c in candidates]
+
+
 @pytest.mark.parametrize(
     ("request_", "message"),
     [
         (CircleRequest(Mood.OMAKASE, radius=0.25), "position on the map"),
+        (CircleRequest(custom_mood(1.2, 0.5), radius=0.25), "custom mood position"),
+        (CircleRequest(custom_mood(0.5, -0.1), radius=0.25), "custom mood position"),
         (CircleRequest(Mood.RELAX, radius=0.0), "radius"),
         (CircleRequest(Mood.RELAX, radius=0.8), "radius"),
         (CircleRequest(Mood.RELAX, radius=0.25, duration_min=60, track_count=10), "together"),
@@ -218,6 +272,27 @@ def test_circle_request_records_method_center_and_radius() -> None:
     assert data["duration_min"] is None
     assert data["genre_mode"] == "mix"
     assert data["genres"] == ["jazz"]
+
+
+def test_custom_mood_circle_records_name_description_and_center_without_attributes() -> None:
+    request = CircleRequest(custom_mood(0.25, 0.75, mood_id=7), radius=0.2)
+
+    data = json.loads(json.dumps(request.to_dict(), ensure_ascii=False))
+
+    assert data["method"] == "circle"
+    # 自由記述の雰囲気は既存の雰囲気ではないため mood は空にし、削除後も再現できるよう名前・説明文・座標を残す
+    assert data["mood"] is None
+    assert data["custom_mood"] == {
+        "id": 7,
+        "name": "雨の午後",
+        "description": "雨の日曜の午後、本を読みながら",
+        "question_version": "jev-mood-test",
+        "model": "jev-test",
+    }
+    assert data["center"] == {"x": 0.25, "y": 0.75}
+    assert data["radius"] == 0.2
+    # 属性の値などの判定結果は記録しない
+    assert "attributes" not in json.dumps(data)
 
 
 def _hypothesis_track(track_id: int, artist: int, duration: float | None) -> Track:
@@ -251,8 +326,14 @@ def placed_candidates(draw: st.DrawFn) -> list[Candidate]:
 @st.composite
 def circle_requests(draw: st.DrawFn) -> CircleRequest:
     cap = draw(st.sampled_from(["none", "duration", "count"]))
+    mood: Mood | CustomMood = draw(
+        st.one_of(
+            st.sampled_from(sorted(MOOD_POSITIONS)),
+            st.builds(custom_mood, st.floats(min_value=0, max_value=1), st.floats(min_value=0, max_value=1)),
+        )
+    )
     return CircleRequest(
-        mood=draw(st.sampled_from(sorted(MOOD_POSITIONS))),
+        mood=mood,
         radius=draw(st.floats(min_value=DEFAULTS.min_circle_radius, max_value=DEFAULTS.max_circle_radius)),
         duration_min=draw(st.integers(DEFAULTS.min_duration_min, DEFAULTS.max_duration_min))
         if cap == "duration"
@@ -270,7 +351,8 @@ def test_circle_playlist_invariants(candidates: list[Candidate], circle: CircleR
 
     chosen = [t.track.id for t in result.tracks]
     assert len(chosen) == len(set(chosen))
-    center = MOOD_POSITIONS[circle.mood]
+    mood = circle.mood
+    center = MapPoint(mood.x, mood.y) if isinstance(mood, CustomMood) else MOOD_POSITIONS[mood]
     radius = circle.radius
     for item in result.tracks:
         point = track_point(item.candidate)

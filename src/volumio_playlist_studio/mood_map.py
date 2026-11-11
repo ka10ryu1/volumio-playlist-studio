@@ -2,18 +2,19 @@
 
 横軸は明るさ（0: 暗い・切ない 〜 1: 明るい・楽しい）、縦軸はエネルギー感（0: 静か 〜 1: 激しい）。
 感情の円環モデル（快・不快 × 覚醒度）に当たる。
+円の中心には、既存の雰囲気のほか、説明文から Jev が位置を決めた自由記述の雰囲気（`custom_mood.py`）も使える。
 
 円で選ぶときは、マップで見たとおりに選ばれることを優先し、円の内外を 2 軸の位置だけで判定する。
 作業BGM適性など他の属性は使わないため、同じ雰囲気でも「雰囲気と長さで選ぶ」とは選ばれる曲が変わる。
 """
 
 import math
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass, fields
 
 import numpy as np
 
 from volumio_playlist_studio.config import PlaylistDefaults
-from volumio_playlist_studio.models import Attribute, Genre, Mood
+from volumio_playlist_studio.models import Attribute, CustomMood, Genre, Mood
 from volumio_playlist_studio.playlist import (
     Candidate,
     CreationMethod,
@@ -66,7 +67,7 @@ class CircleRequest:
     円の中の曲をすべて選ぶ。上限（再生時間か曲数）を付けた場合は、中心に近い順に上限まで選ぶ。
 
     Attributes:
-        mood: 円の中心にする雰囲気。中心はこの雰囲気のマップ上の位置。
+        mood: 円の中心にする雰囲気（既存の雰囲気か、自由記述の雰囲気）。中心はこの雰囲気のマップ上の位置。
         radius: 円の半径（マップの座標での長さ）。
         duration_min: 再生時間の上限（分）。上限を付けない場合は None。
         track_count: 曲数の上限。上限を付けない場合は None。再生時間の上限と同時には指定できない。
@@ -74,7 +75,7 @@ class CircleRequest:
         randomness: 上限を付けたときだけ使う。0 で中心に近い順、1 で最もランダム。
     """
 
-    mood: Mood
+    mood: Mood | CustomMood
     radius: float
     duration_min: int | None = None
     track_count: int | None = None
@@ -90,6 +91,9 @@ class CircleRequest:
     @property
     def center(self) -> MapPoint:
         """円の中心。"""
+        if isinstance(self.mood, CustomMood):
+            return MapPoint(self.mood.x, self.mood.y)
+
         return MOOD_POSITIONS[self.mood]
 
     @property
@@ -103,7 +107,11 @@ class CircleRequest:
         Raises:
             ValueError: 条件が不正な場合。
         """
-        if self.mood not in MOOD_POSITIONS:
+        if isinstance(self.mood, CustomMood):
+            if not (0.0 <= self.mood.x <= 1.0 and 0.0 <= self.mood.y <= 1.0):
+                raise ValueError("custom mood position is out of range")
+
+        elif self.mood not in MOOD_POSITIONS:
             raise ValueError("mood must have a position on the map")
 
         if not defaults.min_circle_radius <= self.radius <= defaults.max_circle_radius:
@@ -129,11 +137,24 @@ class CircleRequest:
     def to_dict(self) -> dict[str, object]:
         """保存用の辞書に変換する。
 
-        雰囲気の位置を後から変えても条件を再現できるよう、中心の座標も記録する。
+        雰囲気の位置を後から変えたり、自由記述の雰囲気を削除したりしても条件を再現できるよう、中心の座標も記録する。
+        自由記述の雰囲気は、`mood` を None とし、名前・説明文・質問定義のバージョンを `custom_mood` に記録する。
         """
-        data = asdict(self)
+        # 自由記述の雰囲気は属性の値などを含むため、asdict で丸ごと変換せず、必要な項目だけを記録する
+        data: dict[str, object] = {f.name: getattr(self, f.name) for f in fields(self) if f.name != "mood"}
         data["method"] = CreationMethod.CIRCLE.value
-        data["mood"] = self.mood.value
+        if isinstance(self.mood, CustomMood):
+            data["mood"] = None
+            data["custom_mood"] = {
+                "id": self.mood.id,
+                "name": self.mood.name,
+                "description": self.mood.description,
+                "question_version": self.mood.question_version,
+                "model": self.mood.model,
+            }
+        else:
+            data["mood"] = self.mood.value
+
         data["center"] = {"x": self.center.x, "y": self.center.y}
         data["genre_mode"] = self.genre_mode.value
         data["genres"] = [g.value for g in self.genres]
@@ -222,7 +243,8 @@ def generate_circle_playlist(
     """
     selected, warnings = arrange(
         select_circle_tracks(candidates, request, defaults),
-        request.mood,
+        # 自由記述の雰囲気では、終盤に向けて落ち着かせるかを決められないため、既存の雰囲気の扱いを使わない
+        None if isinstance(request.mood, CustomMood) else request.mood,
         smooth_order=request.smooth_order,
         avoid_same_artist=request.avoid_same_artist,
     )

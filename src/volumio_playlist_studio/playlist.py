@@ -388,13 +388,13 @@ def _select(
 
 
 def arrange(
-    tracks: list[SelectedTrack], mood: Mood, *, smooth_order: bool, avoid_same_artist: bool
+    tracks: list[SelectedTrack], mood: Mood | None, *, smooth_order: bool, avoid_same_artist: bool
 ) -> tuple[list[SelectedTrack], list[str]]:
     """選んだ曲の曲順を決め、（曲順, 警告）を返す。
 
     Args:
         tracks: 選んだ曲。
-        mood: 雰囲気。最後に向けて落ち着かせるかどうかの判断に使う。
+        mood: 雰囲気。最後に向けて落ち着かせるかどうかの判断に使う。None なら落ち着かせない。
         smooth_order: エネルギー感などが急に変わらないよう並べるかどうか。
         avoid_same_artist: 同じアーティストの連続を避けるかどうか。
     """
@@ -406,7 +406,7 @@ def arrange(
     return ordered, warnings
 
 
-def _smooth_order(tracks: list[SelectedTrack], mood: Mood) -> list[SelectedTrack]:
+def _smooth_order(tracks: list[SelectedTrack], mood: Mood | None) -> list[SelectedTrack]:
     """エネルギー感とリラックス度が急に変わらないよう、近い曲を順につなぐ。
 
     エネルギー感が最も低い曲から始めて、まだ使っていない最も近い曲を次に選ぶ（最近傍法）。

@@ -26,6 +26,7 @@
 - `ANALYSIS_VERSION`: 音響特徴量の抽出方法を変えたとき（更新すると全曲が再解析の対象になる）
 - `RULE_VERSION`: ルールベース分類の計算を変えたとき
 - `JEV_QUESTION_VERSION`: Jev の質問文・候補・特徴量の区分を変えたとき
+- `JEV_MOOD_QUESTION_VERSION`: 自由記述の雰囲気（`custom_mood.py`）の質問文を変えたとき。属性の基準（`classify/jev.py` の `ATTRIBUTE_QUESTIONS`）は共有しているため、基準を変えたときは両方を更新する
 
 ### 外部サービス
 

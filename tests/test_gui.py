@@ -30,6 +30,7 @@ from volumio_playlist_studio.sample_data import DEMO_LIBRARY_ROOT, generate_samp
 from volumio_playlist_studio.scanner import scan_library
 from volumio_playlist_studio.storage import settings_store
 from volumio_playlist_studio.storage.analysis import save_classification
+from volumio_playlist_studio.storage.custom_moods import CustomMoodDraft, list_custom_moods, save_custom_mood
 from volumio_playlist_studio.storage.database import connect, transaction
 from volumio_playlist_studio.storage.evaluations import Verdict, load_labels
 from volumio_playlist_studio.storage.playlists import list_playlists, list_registrations, set_feedback
@@ -366,6 +367,100 @@ def test_playlist_by_circle_previews_and_saves_conditions(demo: sqlite3.Connecti
     assert saved.conditions["radius"] == 0.4
     assert saved.conditions["track_count"] == 1
     assert saved.conditions["duration_min"] is None
+
+
+def save_custom(conn: sqlite3.Connection, name: str, x: float, y: float, expressible: float = 0.9) -> int:
+    """自由記述の雰囲気（架空）を保存する。"""
+    with transaction(conn):
+        return save_custom_mood(
+            conn,
+            CustomMoodDraft(
+                name=name, description=f"{name}の説明", x=x, y=y,
+                attributes={Attribute.BRIGHTNESS: AttributeScore(x, 0.8),
+                            Attribute.WORK_BGM: AttributeScore(None, 0.3)},
+                expressible=expressible, question_version="jev-mood-test", model="jev-test",
+            ),
+        )  # fmt: skip
+
+
+def test_playlist_by_circle_around_custom_mood(demo: sqlite3.Connection) -> None:
+    # 自由記述の雰囲気の位置（0.1, 0.9）の近くに 1 曲、リラックスの位置に 1 曲
+    save_jev_positions(demo, [(0.15, 0.9), (0.6, 0.25)])
+    mood_id = save_custom(demo, "嵐の夜", 0.1, 0.9)
+    at = run_view("playlist_page")
+    at.radio(key="pl_method").set_value(CreationMethod.CIRCLE).run()
+
+    center = at.radio(key="pl_center")
+    assert "嵐の夜" in center.options
+    center.set_value(f"custom:{mood_id}").run()
+
+    assert any(m.value.startswith("**選ばれる曲: 1 曲・合計") for m in at.markdown)
+    custom_rows = [row for row in mood_map_values(at) if row.get("説明文") == "嵐の夜の説明"]
+    assert [(row["x"], row["y"]) for row in custom_rows] == [(0.1, 0.9)] * 2
+    assert any("▲ は自由記述で作った雰囲気" in c.value for c in at.caption)
+
+    click(at, "プレイリストを生成")
+    assert any(h.value == "嵐の夜周辺のプレイリスト" for h in at.subheader)
+    click(at, "プレイリストを保存")
+    [saved] = list_playlists(demo)
+    assert saved.name.startswith("嵐の夜周辺 ")
+    assert saved.conditions["mood"] is None
+    assert saved.conditions["center"] == {"x": 0.1, "y": 0.9}
+    custom = saved.conditions["custom_mood"]
+    assert isinstance(custom, dict)
+    assert (custom["name"], custom["description"]) == ("嵐の夜", "嵐の夜の説明")
+
+
+def test_custom_mood_panel_without_api_key_only_explains(demo: sqlite3.Connection) -> None:
+    at = run_view("playlist_page")
+    at.radio(key="pl_method").set_value(CreationMethod.CIRCLE).run()
+
+    assert any("TYPESAFE_API_KEY が未設定" in i.value for i in at.info)
+    assert not any(b.label == "Jev で位置を決めて作成" for b in at.button)
+
+
+def test_custom_mood_form_requires_name_and_description(
+    demo: sqlite3.Connection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # ボタンは押さない（実際の API とは通信しない）
+    monkeypatch.setenv("TYPESAFE_API_KEY", "dummy-key-for-display")
+    at = run_view("playlist_page")
+    at.radio(key="pl_method").set_value(CreationMethod.CIRCLE).run()
+
+    def create_button_disabled() -> bool:
+        return next(b for b in at.button if b.label == "Jev で位置を決めて作成").disabled
+
+    assert create_button_disabled()
+    at.text_input(key="cm_name").set_value("雨の午後").run()
+    assert create_button_disabled()
+    at.text_area(key="cm_description").set_value("雨の日曜の午後、本を読みながら").run()
+    assert not create_button_disabled()
+    assert any("1 件リクエストを送ります" in c.value and "名前や音楽ライブラリの情報は送りません" in c.value
+               for c in at.caption)  # fmt: skip
+
+
+def test_custom_mood_details_and_delete(demo: sqlite3.Connection) -> None:
+    save_custom(demo, "残す", 0.3, 0.3)
+    removed_id = save_custom(demo, "年代指定", 0.8, 0.6, expressible=0.2)
+    at = run_view("playlist_page")
+    at.radio(key="pl_method").set_value(CreationMethod.CIRCLE).run()
+    at.radio(key="pl_center").set_value(f"custom:{removed_id}").run()
+    at.selectbox(key="cm_selected").set_value(removed_id).run()
+
+    assert any(t.value == "説明文: 年代指定の説明" for t in at.text)
+    # 属性で表せない要素を含む可能性が高い雰囲気には注意を出す
+    assert any("属性では表せない要素" in w.value for w in at.warning)
+    details = next(d.value for d in at.dataframe if "属性" in d.value.columns)
+    assert dict(zip(details["属性"], details["値"], strict=True))["作業BGM適性"] == "判定保留"
+
+    at.checkbox(key=f"cm-delete-confirm-{removed_id}").check().run()
+    click(at, "雰囲気を削除")
+
+    assert [m.name for m in list_custom_moods(demo)] == ["残す"]
+    assert any(s.value == "「年代指定」を削除しました。" for s in at.success)
+    # 削除した雰囲気は円の中心の選択肢から消え、既定の中心に戻る
+    assert "年代指定" not in at.radio(key="pl_center").options
+    assert at.radio(key="pl_center").value == Mood.RELAX
 
 
 def test_playlist_by_circle_without_jev_selects_nothing(demo: sqlite3.Connection) -> None:
