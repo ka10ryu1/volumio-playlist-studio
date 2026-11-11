@@ -194,7 +194,7 @@ def _mood_conditions(defaults: PlaylistDefaults, ctx: PageContext) -> PlaylistRe
     by_count = st.radio("長さの指定", ["再生時間", "曲数"], horizontal=True, key="pl_length") == "曲数"
     duration, count = _length_inputs(defaults)
     st.caption("「長さの指定」で選んだ方の値を使います。")
-    options = _detail_options(ctx, preference_note=None)
+    options = _detail_options(ctx, ranking="適合度順", preference_note=None)
     if not _generate_button():
         return None
 
@@ -252,7 +252,9 @@ def _circle_conditions(
     cap = st.radio("上限", [_CAP_NONE, _CAP_DURATION, _CAP_COUNT], horizontal=True, key="pl_cap")
     duration, count = _length_inputs(defaults)
     st.caption("上限を付けると、円の中の曲から中心に近い順に、上限を超えない範囲で選びます。")
-    options = _detail_options(ctx, preference_note=None if cap != _CAP_NONE else "上限を付けたときだけ使います。")
+    options = _detail_options(
+        ctx, ranking="中心に近い順", preference_note=None if cap != _CAP_NONE else "上限を付けたときだけ使います。"
+    )
     request = None
     if center is not None and (options.genre_mode == GenreMode.ALL or options.genres):
         request = CircleRequest(
@@ -324,11 +326,12 @@ def _length_inputs(defaults: PlaylistDefaults) -> tuple[int, int]:
     return int(duration), int(count)
 
 
-def _detail_options(ctx: PageContext, *, preference_note: str | None) -> _Options:
+def _detail_options(ctx: PageContext, *, ranking: str, preference_note: str | None) -> _Options:
     """詳細設定の欄。
 
     Args:
         ctx: 画面の共通情報。
+        ranking: ランダム性が 0 のときの選曲の順（例: 適合度順）。ランダム性の説明に使う。
         preference_note: 意外性・ランダム性を使わない場合に、入力欄を無効にして表示する説明。使う場合は None。
     """
     with st.expander("詳細設定"):
@@ -355,7 +358,7 @@ def _detail_options(ctx: PageContext, *, preference_note: str | None) -> _Option
             "選曲の意外性（左: 定番中心 / 右: 新しい発見）", 0.0, 1.0, step=0.1, key="pl_novelty", disabled=disabled
         )
         randomness = st.slider(
-            "ランダム性（左: 適合度順 / 右: ランダム）", 0.0, 1.0, step=0.1, key="pl_randomness", disabled=disabled
+            f"ランダム性（左: {ranking} / 右: ランダム）", 0.0, 1.0, step=0.1, key="pl_randomness", disabled=disabled
         )
         if preference_note is not None:
             st.caption(f"選曲の意外性・ランダム性は、{preference_note}")

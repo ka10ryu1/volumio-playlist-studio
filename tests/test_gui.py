@@ -300,6 +300,19 @@ def test_mood_map_without_brightness_explains_jev(demo: sqlite3.Connection) -> N
     assert not any("曲名" in row for row in mood_map_values(at))
 
 
+def test_mood_map_labels_have_background_halo(demo: sqlite3.Connection) -> None:
+    # 名前は、円の線や曲の点と重なっても読めるよう、背景色の縁取りの上に書く
+    at = run_view("playlist_page")
+    [chart] = [e for e in at.main if e.type == "vega_lite_chart"]
+    text_marks = [layer["mark"] for layer in json.loads(chart.proto.spec)["layer"] if layer["mark"]["type"] == "text"]
+
+    halos = [m for m in text_marks if "stroke" in m]
+    assert halos
+    assert {m["stroke"] for m in halos} == {"#ffffff"}
+    # 縁取りと名前は対になっている
+    assert len(text_marks) == 2 * len(halos)
+
+
 def test_mood_map_shows_tracks_classified_by_jev(demo: sqlite3.Connection) -> None:
     track = list_tracks(demo, DEMO_LIBRARY_ROOT)[0]
     jev = ClassificationResult(
@@ -396,7 +409,9 @@ def test_playlist_by_circle_around_custom_mood(demo: sqlite3.Connection) -> None
 
     assert any(m.value.startswith("**選ばれる曲: 1 曲・合計") for m in at.markdown)
     custom_rows = [row for row in mood_map_values(at) if row.get("説明文") == "嵐の夜の説明"]
-    assert [(row["x"], row["y"]) for row in custom_rows] == [(0.1, 0.9)] * 2
+    # ▲ と名前（縁取りを含む）を、Jev が決めた位置に描く
+    assert custom_rows
+    assert {(row["x"], row["y"]) for row in custom_rows} == {(0.1, 0.9)}
     assert any("▲ は自由記述で作った雰囲気" in c.value for c in at.caption)
 
     click(at, "プレイリストを生成")
@@ -461,6 +476,22 @@ def test_custom_mood_details_and_delete(demo: sqlite3.Connection) -> None:
     # 削除した雰囲気は円の中心の選択肢から消え、既定の中心に戻る
     assert "年代指定" not in at.radio(key="pl_center").options
     assert at.radio(key="pl_center").value == Mood.RELAX
+
+
+def test_randomness_label_follows_creation_method(demo: sqlite3.Connection) -> None:
+    # ランダム性 0 のときの順は、雰囲気で選ぶ場合は適合度順、円で選ぶ場合は中心に近い順
+    at = run_view("playlist_page")
+    at.slider(key="pl_randomness").set_value(0.8).run()
+    assert at.slider(key="pl_randomness").label == "ランダム性（左: 適合度順 / 右: ランダム）"
+
+    at.radio(key="pl_method").set_value(CreationMethod.CIRCLE).run()
+    at.radio(key="pl_cap").set_value("曲数").run()
+    assert at.slider(key="pl_randomness").label == "ランダム性（左: 中心に近い順 / 右: ランダム）"
+    # 説明が変わっても、入力済みの値は保つ
+    assert at.slider(key="pl_randomness").value == 0.8
+
+    at.radio(key="pl_method").set_value(CreationMethod.MOOD).run()
+    assert at.slider(key="pl_randomness").value == 0.8
 
 
 def test_playlist_by_circle_without_jev_selects_nothing(demo: sqlite3.Connection) -> None:
