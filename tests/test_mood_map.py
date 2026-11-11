@@ -28,7 +28,7 @@ from volumio_playlist_studio.mood_map import (
     select_circle_tracks,
     track_point,
 )
-from volumio_playlist_studio.playlist import Candidate, GenreMode
+from volumio_playlist_studio.playlist import PLAYLIST_MOODS, Candidate, GenreMode
 
 DEFAULTS = PlaylistDefaults()
 # 円の中心にする雰囲気の位置。テストの曲はここからのずれで置く
@@ -46,8 +46,8 @@ def custom_mood(x: float, y: float, mood_id: int = 1) -> CustomMood:
     )  # fmt: skip
 
 
-def test_every_mood_except_omakase_has_position_within_map() -> None:
-    assert set(MOOD_POSITIONS) == set(Mood) - {Mood.OMAKASE}
+def test_every_playlist_mood_except_omakase_has_position_within_map() -> None:
+    assert set(MOOD_POSITIONS) == set(PLAYLIST_MOODS) - {Mood.OMAKASE}
     for point in MOOD_POSITIONS.values():
         assert 0.0 <= point.x <= 1.0
         assert 0.0 <= point.y <= 1.0
@@ -57,6 +57,13 @@ def test_mood_positions_follow_impression() -> None:
     # 横軸は明るさ、縦軸はエネルギー感
     assert MOOD_POSITIONS[Mood.MELLOW].x < MOOD_POSITIONS[Mood.MORNING].x
     assert MOOD_POSITIONS[Mood.SLEEP].y < MOOD_POSITIONS[Mood.WORKOUT].y
+    # 緊迫・スリリングは暗く激しい（左上）、夜の街・クールは暗めで中くらいの勢い
+    tense = MOOD_POSITIONS[Mood.TENSE]
+    assert tense.x < MOOD_POSITIONS[Mood.ENERGETIC].x
+    assert tense.y > MOOD_POSITIONS[Mood.DRIVE].y
+    night_city = MOOD_POSITIONS[Mood.NIGHT_CITY]
+    assert night_city.x < MOOD_POSITIONS[Mood.FOCUS].x
+    assert MOOD_POSITIONS[Mood.MELLOW].y < night_city.y < tense.y
 
 
 def test_track_is_placed_by_brightness_and_energy(

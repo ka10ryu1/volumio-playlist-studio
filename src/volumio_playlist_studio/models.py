@@ -77,6 +77,7 @@ class Mood(StrEnum):
     分類結果のムード（1 曲に 1 つ決めるもの）に使うのは `classify.base.MOOD_COMPONENTS` にあるものだけ。
     それ以外はプレイリスト生成でのみ選べる。似た雰囲気どうしを曲ごとに判定すると差がつかず判定保留が増えるため、
     分類結果のムードは大まかな区分にとどめている。OMAKASE は雰囲気で絞り込まないことを表す。
+    CALM_NIGHT は分類結果のムードにだけ使い、プレイリスト生成では選べない（選べる雰囲気は `playlist.PLAYLIST_MOODS`）。
     """
 
     RELAX = "relax"
@@ -89,6 +90,8 @@ class Mood(StrEnum):
     WORKOUT = "workout"
     MELLOW = "mellow"
     SLEEP = "sleep"
+    NIGHT_CITY = "night_city"
+    TENSE = "tense"
     OMAKASE = "omakase"
 
 
@@ -103,6 +106,8 @@ MOOD_LABELS: dict[Mood, str] = {
     Mood.WORKOUT: "ワークアウト",
     Mood.MELLOW: "しっとり・切ない",
     Mood.SLEEP: "入眠",
+    Mood.NIGHT_CITY: "夜の街・クール",
+    Mood.TENSE: "緊迫・スリリング",
     Mood.OMAKASE: "おまかせ",
 }
 

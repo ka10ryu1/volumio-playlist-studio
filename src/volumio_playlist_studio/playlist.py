@@ -43,12 +43,12 @@ CREATION_METHOD_LABELS: dict[CreationMethod, str] = {
 }
 
 # 雰囲気ごとに（属性, 重み, 目標値）を定める。適合度は 1 - |値 - 目標値| の重み付き平均。
-# 先頭の属性を主属性とし、主属性が判定保留の曲はその雰囲気の候補にしない
+# 先頭の属性を主属性とし、主属性が判定保留の曲はその雰囲気の候補にしない。
+# 穏やかな夜（分類結果のムードとしてだけ使う）は、リラックス・入眠と選ばれる曲の差が小さかったため選曲では選べない
 _MOOD_PROFILES: dict[Mood, tuple[tuple[Attribute, float, float], ...]] = {
     Mood.RELAX: ((Attribute.RELAXATION, 2.0, 1.0), (Attribute.ENERGY, 1.0, 0.25), (Attribute.CALMNESS, 1.0, 1.0)),
     Mood.FOCUS: ((Attribute.WORK_BGM, 2.0, 1.0), (Attribute.ENERGY, 1.0, 0.4), (Attribute.CALMNESS, 1.0, 0.7)),
     Mood.ENERGETIC: ((Attribute.ENERGY, 2.0, 1.0), (Attribute.PARTY, 1.0, 1.0), (Attribute.BRIGHTNESS, 1.0, 0.8)),
-    Mood.CALM_NIGHT: ((Attribute.NIGHT_BGM, 2.0, 1.0), (Attribute.ENERGY, 1.0, 0.15), (Attribute.CALMNESS, 1.0, 1.0)),
     # 明るさが主属性の雰囲気は、明るさを判定しないルールベースの結果では候補が出ない
     Mood.MORNING: ((Attribute.BRIGHTNESS, 2.0, 1.0), (Attribute.ENERGY, 1.0, 0.55), (Attribute.CALMNESS, 1.0, 0.6)),
     Mood.CAFE: ((Attribute.RELAXATION, 2.0, 0.7), (Attribute.ENERGY, 1.0, 0.4), (Attribute.BRIGHTNESS, 1.0, 0.7)),
@@ -56,7 +56,11 @@ _MOOD_PROFILES: dict[Mood, tuple[tuple[Attribute, float, float], ...]] = {
     Mood.WORKOUT: ((Attribute.PARTY, 2.0, 1.0), (Attribute.ENERGY, 2.0, 1.0), (Attribute.RELAXATION, 1.0, 0.0)),
     Mood.MELLOW: ((Attribute.BRIGHTNESS, 2.0, 0.0), (Attribute.ENERGY, 1.0, 0.3), (Attribute.CALMNESS, 1.0, 0.8)),
     Mood.SLEEP: ((Attribute.CALMNESS, 2.0, 1.0), (Attribute.ENERGY, 1.5, 0.0), (Attribute.RELAXATION, 1.0, 1.0)),
+    Mood.NIGHT_CITY: ((Attribute.BRIGHTNESS, 2.0, 0.2), (Attribute.ENERGY, 1.5, 0.5), (Attribute.CALMNESS, 1.0, 0.4)),
+    Mood.TENSE: ((Attribute.BRIGHTNESS, 2.0, 0.1), (Attribute.ENERGY, 2.0, 0.95), (Attribute.CALMNESS, 1.0, 0.0)),
 }
+# プレイリスト生成で選べる雰囲気（画面に並べる順）
+PLAYLIST_MOODS: tuple[Mood, ...] = (*_MOOD_PROFILES, Mood.OMAKASE)
 # 「おまかせ」では雰囲気で絞り込まず、全曲を同じ適合度として扱う
 _OMAKASE_SUITABILITY = 0.6
 # 意外性・ランダム性がスコアに与える影響の最大値
@@ -67,7 +71,7 @@ _FAMILIAR_USAGE = 3
 # 曲順を決めるとき、判定保留の属性はこの値とみなす
 _NEUTRAL_VALUE = 0.5
 # 最後に向けて落ち着かせる雰囲気
-_WIND_DOWN_MOODS = frozenset({Mood.RELAX, Mood.CALM_NIGHT, Mood.SLEEP})
+_WIND_DOWN_MOODS = frozenset({Mood.RELAX, Mood.SLEEP})
 
 REASON_UNCLASSIFIED = "判定保留・未分類"
 REASON_UNSUITABLE = "雰囲気に合わない"
@@ -107,6 +111,9 @@ class PlaylistRequest:
         Raises:
             ValueError: 条件が不正な場合。
         """
+        if self.mood not in PLAYLIST_MOODS:
+            raise ValueError("mood is not available for playlists")
+
         if (self.duration_min is None) == (self.track_count is None):
             raise ValueError("exactly one of duration_min and track_count must be set")
 
@@ -410,7 +417,7 @@ def _smooth_order(tracks: list[SelectedTrack], mood: Mood | None) -> list[Select
     """エネルギー感とリラックス度が急に変わらないよう、近い曲を順につなぐ。
 
     エネルギー感が最も低い曲から始めて、まだ使っていない最も近い曲を次に選ぶ（最近傍法）。
-    これにより全体としてエネルギー感が徐々に上がる並びになる。リラックス・穏やかな夜・入眠では逆順にし、
+    これにより全体としてエネルギー感が徐々に上がる並びになる。リラックス・入眠では逆順にし、
     終盤に向けて落ち着いていく並びにする。
     """
     if len(tracks) <= 1:

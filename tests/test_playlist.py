@@ -19,6 +19,7 @@ from volumio_playlist_studio.models import (
     Track,
 )
 from volumio_playlist_studio.playlist import (
+    PLAYLIST_MOODS,
     REASON_DUPLICATE,
     REASON_GENRE,
     REASON_NO_DURATION,
@@ -224,15 +225,29 @@ def test_energetic_playlist_starts_low_and_relaxing_playlist_ends_low(
     assert ordered == sorted(energies)
 
     calm = [
-        Candidate(make_track(), make_classification(night_bgm=0.9, energy=e / 4, calmness=0.9), None) for e in energies
+        Candidate(make_track(), make_classification(relaxation=0.9, energy=e / 4, calmness=0.9), None) for e in energies
     ]
-    result = generate_playlist(calm, PlaylistRequest(Mood.CALM_NIGHT, duration_min=None, track_count=5), DEFAULTS)
+    result = generate_playlist(calm, PlaylistRequest(Mood.RELAX, duration_min=None, track_count=5), DEFAULTS)
     ordered = [
         t.candidate.classification.attribute_value(Attribute.ENERGY)
         for t in result.tracks
         if t.candidate.classification
     ]
     assert ordered == sorted((e / 4 for e in energies), reverse=True)
+
+
+def test_playlist_moods_exclude_calm_night_but_include_new_moods() -> None:
+    # 穏やかな夜は分類結果のムードとしてだけ使い、プレイリスト生成では選べない
+    assert Mood.CALM_NIGHT not in PLAYLIST_MOODS
+    assert {Mood.NIGHT_CITY, Mood.TENSE, Mood.OMAKASE} <= set(PLAYLIST_MOODS)
+    assert PLAYLIST_MOODS[-1] == Mood.OMAKASE
+
+
+def test_calm_night_playlist_request_is_rejected(make_track: TrackFactory) -> None:
+    candidates = [Candidate(make_track(), None, None)]
+
+    with pytest.raises(ValueError, match="mood is not available"):
+        generate_playlist(candidates, PlaylistRequest(Mood.CALM_NIGHT, duration_min=None, track_count=1), DEFAULTS)
 
 
 @pytest.mark.parametrize(
@@ -255,9 +270,14 @@ def test_energetic_playlist_starts_low_and_relaxing_playlist_ends_low(
         (Mood.MELLOW, {"brightness": 0.0, "energy": 0.3, "calmness": 0.8}, 1.0),
         (Mood.SLEEP, {"calmness": 1.0, "energy": 0.0, "relaxation": 1.0}, 1.0),
         (Mood.SLEEP, {"calmness": 0.0, "energy": 1.0, "relaxation": 0.0}, 0.0),
+        (Mood.NIGHT_CITY, {"brightness": 0.2, "energy": 0.5, "calmness": 0.4}, 1.0),
+        (Mood.NIGHT_CITY, {"brightness": 0.7, "energy": 0.2, "calmness": 0.4}, (2 * 0.5 + 1.5 * 0.7 + 1) / 4.5),
+        (Mood.TENSE, {"brightness": 0.1, "energy": 0.95, "calmness": 0.0}, 1.0),
+        (Mood.TENSE, {"brightness": 0.9, "energy": 0.15, "calmness": 1.0}, (2 * 0.2 + 2 * 0.2 + 0) / 5),
         # 明るさが主属性の雰囲気は、明るさを判定しないルールベースの結果では候補にならない
         (Mood.MORNING, {"energy": 0.55, "calmness": 0.6}, None),
         (Mood.MELLOW, {"energy": 0.3, "calmness": 0.8}, None),
+        (Mood.TENSE, {"energy": 0.95, "calmness": 0.0}, None),
     ],
 )
 def test_suitability(
@@ -272,7 +292,7 @@ def test_suitability(
 
 
 @given(
-    mood=st.sampled_from(list(Mood)),
+    mood=st.sampled_from(PLAYLIST_MOODS),
     values=st.dictionaries(st.sampled_from(list(Attribute)), st.floats(min_value=0.0, max_value=1.0)),
 )
 def test_suitability_is_within_unit_range_for_every_mood(mood: Mood, values: dict[Attribute, float]) -> None:
@@ -304,7 +324,9 @@ def test_sleep_playlist_ends_with_lowest_energy(
     assert ordered == sorted(energies, reverse=True)
 
 
-@pytest.mark.parametrize(("mood", "suggests_jev"), [(Mood.MORNING, True), (Mood.MELLOW, True), (Mood.DRIVE, False)])
+@pytest.mark.parametrize(
+    ("mood", "suggests_jev"), [(Mood.MORNING, True), (Mood.MELLOW, True), (Mood.NIGHT_CITY, True), (Mood.DRIVE, False)]
+)
 def test_shortfall_suggests_jev_for_brightness_moods(
     make_track: TrackFactory, make_classification: ClassificationFactory, mood: Mood, suggests_jev: bool
 ) -> None:

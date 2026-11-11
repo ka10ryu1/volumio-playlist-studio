@@ -262,9 +262,13 @@ def test_playlist_shortfall_offers_relaxation(demo: sqlite3.Connection) -> None:
     assert any("条件を緩和" in m.value for m in at.markdown)
 
 
-def test_playlist_offers_ten_moods_and_suggests_jev_for_morning(demo: sqlite3.Connection) -> None:
+def test_playlist_offers_eleven_moods_and_suggests_jev_for_morning(demo: sqlite3.Connection) -> None:
     at = run_view("playlist_page")
-    assert len(at.radio(key="pl_mood").options) == 11  # 10 種類の雰囲気と「おまかせ」
+    options = at.radio(key="pl_mood").options
+    assert len(options) == 12  # 11 種類の雰囲気と「おまかせ」
+    assert {"夜の街・クール", "緊迫・スリリング"} <= set(options)
+    # 穏やかな夜は分類結果のムードとしてだけ使う
+    assert "穏やかな夜" not in options
 
     # デモデータはルールベースの判定だけで明るさが判定保留のため、朝・爽やかの候補がない
     at.radio(key="pl_mood").set_value(Mood.MORNING)
@@ -297,6 +301,8 @@ def test_mood_map_without_brightness_explains_jev(demo: sqlite3.Connection) -> N
     # 曲がなくても雰囲気の位置は描く
     moods = {row["雰囲気"]: (row["x"], row["y"]) for row in mood_map_values(at) if "雰囲気" in row}
     assert moods["しっとり・切ない"] == (0.0, 0.3)
+    assert moods["緊迫・スリリング"] == (0.1, 0.95)
+    assert "穏やかな夜" not in moods
     assert not any("曲名" in row for row in mood_map_values(at))
 
 

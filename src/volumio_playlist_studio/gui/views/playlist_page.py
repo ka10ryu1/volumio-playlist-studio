@@ -25,6 +25,7 @@ from volumio_playlist_studio.mood_map import (
 from volumio_playlist_studio.playlist import (
     CREATION_METHOD_LABELS,
     GENRE_MODE_LABELS,
+    PLAYLIST_MOODS,
     Candidate,
     CreationMethod,
     GenerationResult,
@@ -190,7 +191,7 @@ def _conditions_panel(
 
 
 def _mood_conditions(defaults: PlaylistDefaults, ctx: PageContext) -> PlaylistRequest | None:
-    mood = st.radio("雰囲気", list(Mood), format_func=MOOD_LABELS.__getitem__, horizontal=True, key=_MOOD_KEY)
+    mood = st.radio("雰囲気", PLAYLIST_MOODS, format_func=MOOD_LABELS.__getitem__, horizontal=True, key=_MOOD_KEY)
     by_count = st.radio("長さの指定", ["再生時間", "曲数"], horizontal=True, key="pl_length") == "曲数"
     duration, count = _length_inputs(defaults)
     st.caption("「長さの指定」で選んだ方の値を使います。")
