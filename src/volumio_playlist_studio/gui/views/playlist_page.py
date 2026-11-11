@@ -1,10 +1,11 @@
 """プレイリスト作成画面。
 
-条件を指定した生成、雰囲気マップの表示、編集・保存・Volumio 登録のプレビュー、保存済みの削除を行う。
+条件を指定した生成（雰囲気と長さ、またはマップの円で選ぶ）、雰囲気マップの表示、編集・保存・Volumio 登録の
+プレビュー、保存済みの削除を行う。
 """
 
 import logging
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 import streamlit as st
@@ -15,9 +16,17 @@ from volumio_playlist_studio.gui.context import PageContext
 from volumio_playlist_studio.gui.views import mood_map_panel, volumio_panel
 from volumio_playlist_studio.gui.widgets import format_duration, genre_label, track_label
 from volumio_playlist_studio.models import CLASSIFICATION_SOURCE_LABELS, MOOD_LABELS, Genre, Mood
+from volumio_playlist_studio.mood_map import (
+    MOOD_POSITIONS,
+    CircleRequest,
+    generate_circle_playlist,
+    select_circle_tracks,
+)
 from volumio_playlist_studio.playlist import (
+    CREATION_METHOD_LABELS,
     GENRE_MODE_LABELS,
     Candidate,
+    CreationMethod,
     GenerationResult,
     GenreMode,
     PlaylistRequest,
@@ -40,7 +49,9 @@ from volumio_playlist_studio.storage.playlists import (
 
 logger = logging.getLogger(__name__)
 
+_METHOD_KEY = "pl_method"
 _MOOD_KEY = "pl_mood"
+_CENTER_KEY = "pl_center"
 _RESULT_KEY = "pl_result"
 _DRAFT_KEY = "pl_draft"
 _SAVED_KEY = "pl_saved_id"
@@ -49,9 +60,16 @@ _DELETED_NAME_KEY = "pl_deleted_name"
 _SEED_KEY = "pl_seed"
 _MAX_SEED = 1_000_000
 _SECONDS_PER_MINUTE = 60
+_CAP_NONE = "なし"
+_CAP_DURATION = "再生時間"
+_CAP_COUNT = "曲数"
 _INPUT_KEYS = (
+    _METHOD_KEY,
     _MOOD_KEY,
+    _CENTER_KEY,
     _SEED_KEY,
+    "pl_radius",
+    "pl_cap",
     "pl_length",
     "pl_duration",
     "pl_count",
@@ -66,6 +84,23 @@ _INPUT_KEYS = (
     "pl_edit_track",
 )
 _INPUT_VALUES_KEY = "pl_input_values"
+
+type Request = PlaylistRequest | CircleRequest
+type Result = GenerationResult[PlaylistRequest] | GenerationResult[CircleRequest]
+
+
+@dataclass(frozen=True)
+class _Options:
+    """作成方法によらず共通の、詳細設定の値。"""
+
+    genre_mode: GenreMode
+    genres: tuple[Genre, ...]
+    novelty: float
+    randomness: float
+    avoid_same_artist: bool
+    avoid_duplicates: bool
+    smooth_order: bool
+    seed: int
 
 
 def preserve_inputs() -> None:
@@ -91,16 +126,18 @@ def render(ctx: PageContext) -> None:
     candidates = load_candidates(ctx.conn, ctx.library_root, ctx.classification_source)
     st.caption("1 条件を選ぶ → 2 曲を編集 → 3 保存・連携")
     with st.expander("1. 選曲の条件", expanded=_RESULT_KEY not in st.session_state):
-        request = _conditions_panel(defaults, ctx)
+        request = _conditions_panel(defaults, ctx, candidates)
 
-    with st.expander("雰囲気マップ"):
-        mood_map_panel.render(candidates)
+    # 円で選ぶ場合は、条件の欄の中にマップを描く
+    if st.session_state.get(_METHOD_KEY) != CreationMethod.CIRCLE:
+        with st.expander("雰囲気マップ"):
+            mood_map_panel.render(candidates)
 
     if request is not None:
         _generate(candidates, request, defaults)
         st.rerun()
 
-    result: GenerationResult | None = st.session_state.get(_RESULT_KEY)
+    result: Result | None = st.session_state.get(_RESULT_KEY)
     if result is not None:
         edit_tab, save_tab = st.tabs(["2. 曲を編集", "3. 保存・連携"])
         with edit_tab:
@@ -114,14 +151,16 @@ def render(ctx: PageContext) -> None:
     _saved_playlists_section(ctx)
 
 
-def _conditions_panel(defaults: PlaylistDefaults, ctx: PageContext) -> PlaylistRequest | None:
+def _conditions_panel(defaults: PlaylistDefaults, ctx: PageContext, candidates: list[Candidate]) -> Request | None:
     # 入力は都度セッションに反映する。曲の編集やページ移動で、未生成の条件も失わないようにする。
     if _SEED_KEY not in st.session_state:
         st.session_state[_SEED_KEY] = int(datetime.now().timestamp()) % _MAX_SEED
 
     for key, value in {
+        _METHOD_KEY: CreationMethod.MOOD,
         "pl_duration": defaults.default_duration_min,
         "pl_count": 15,
+        "pl_radius": defaults.default_circle_radius,
         "pl_novelty": 0.3,
         "pl_randomness": 0.3,
         "pl_artist": True,
@@ -131,77 +170,177 @@ def _conditions_panel(defaults: PlaylistDefaults, ctx: PageContext) -> PlaylistR
         st.session_state.setdefault(key, value)
 
     with st.container():
-        mood = st.radio("雰囲気", list(Mood), format_func=MOOD_LABELS.__getitem__, horizontal=True, key=_MOOD_KEY)
-        by_count = st.radio("長さの指定", ["再生時間", "曲数"], horizontal=True, key="pl_length") == "曲数"
-        duration_col, count_col = st.columns(2)
-        duration = duration_col.slider(
-            "再生時間（分）",
-            defaults.min_duration_min,
-            defaults.max_duration_min,
-            step=5,
-            key="pl_duration",
+        method = st.radio(
+            "作成方法",
+            list(CreationMethod),
+            format_func=CREATION_METHOD_LABELS.__getitem__,
+            horizontal=True,
+            key=_METHOD_KEY,
         )
-        count = count_col.number_input(
-            "曲数",
-            min_value=1,
-            max_value=defaults.max_track_count,
-            key="pl_count",
-        )
-        st.caption("「長さの指定」で選んだ方の値を使います。")
-        with st.expander("詳細設定"):
-            st.caption(
-                f"選曲に使う分類結果: {CLASSIFICATION_SOURCE_LABELS[ctx.classification_source]}（設定画面で変更）"
-            )
-            genre_mode = st.radio(
-                "ジャンル",
-                list(GenreMode),
-                format_func=lambda m: GENRE_MODE_LABELS[m],
-                horizontal=True,
-                key="pl_genre_mode",
-            )
-            genres = st.multiselect(
-                "ジャンルを選ぶ（全ジャンル以外の場合）",
-                list(Genre),
-                format_func=genre_label,
-                placeholder="ジャンルを選択",
-                key="pl_genres",
-                # 一覧から選ぶだけなので文字入力を受け付けず、スマートフォンでキーボードを出さない
-                filter_mode=None,
-            )
-            novelty = st.slider("選曲の意外性（左: 定番中心 / 右: 新しい発見）", 0.0, 1.0, step=0.1, key="pl_novelty")
-            randomness = st.slider("ランダム性（左: 適合度順 / 右: ランダム）", 0.0, 1.0, step=0.1, key="pl_randomness")
-            avoid_same_artist = st.checkbox("同じアーティストの連続を避ける", key="pl_artist")
-            avoid_duplicates = st.checkbox("同じ曲の重複を避ける", key="pl_duplicates")
-            smooth_order = st.checkbox("曲順を自然につなぐ", key="pl_smooth")
-            seed = st.number_input(
-                "seed（同じ値なら同じ結果を再現します）",
-                min_value=0,
-                max_value=_MAX_SEED,
-                key=_SEED_KEY,
-            )
+        if method == CreationMethod.CIRCLE:
+            return _circle_conditions(defaults, ctx, candidates)
 
-        if _RESULT_KEY in st.session_state:
-            st.caption("生成すると編集中の曲一覧を置き換えます。保存済みのプレイリストは残ります。")
+        return _mood_conditions(defaults, ctx)
 
-        submitted = st.button("プレイリストを生成", type="primary", width="stretch")
 
-    if not submitted:
+def _mood_conditions(defaults: PlaylistDefaults, ctx: PageContext) -> PlaylistRequest | None:
+    mood = st.radio("雰囲気", list(Mood), format_func=MOOD_LABELS.__getitem__, horizontal=True, key=_MOOD_KEY)
+    by_count = st.radio("長さの指定", ["再生時間", "曲数"], horizontal=True, key="pl_length") == "曲数"
+    duration, count = _length_inputs(defaults)
+    st.caption("「長さの指定」で選んだ方の値を使います。")
+    options = _detail_options(ctx, preference_note=None)
+    if not _generate_button():
         return None
 
     if mood is None:
         st.error("雰囲気を選んでください。")
         return None
 
-    genre_mode = genre_mode or GenreMode.ALL
-    if genre_mode != GenreMode.ALL and not genres:
-        st.error("ジャンルを 1 つ以上選んでください。")
+    if not _genres_are_valid(options):
         return None
 
     return PlaylistRequest(
         mood=mood,
-        duration_min=None if by_count else int(duration),
-        track_count=int(count) if by_count else None,
-        genre_mode=genre_mode,
+        duration_min=None if by_count else duration,
+        track_count=count if by_count else None,
+        genre_mode=options.genre_mode,
+        genres=options.genres,
+        novelty=options.novelty,
+        randomness=options.randomness,
+        avoid_same_artist=options.avoid_same_artist,
+        avoid_duplicates=options.avoid_duplicates,
+        smooth_order=options.smooth_order,
+        seed=options.seed,
+    )
+
+
+def _circle_conditions(
+    defaults: PlaylistDefaults, ctx: PageContext, candidates: list[Candidate]
+) -> CircleRequest | None:
+    centers = [mood for mood in Mood if mood in MOOD_POSITIONS]
+    center = st.radio(
+        "円の中心（雰囲気）", centers, format_func=MOOD_LABELS.__getitem__, horizontal=True, key=_CENTER_KEY
+    )
+    radius = st.slider(
+        "円の大きさ（半径）",
+        defaults.min_circle_radius,
+        defaults.max_circle_radius,
+        step=0.05,
+        key="pl_radius",
+        help="マップの縦横はそれぞれ 0〜1 です。円の中の曲を、明るさとエネルギー感の位置だけで選びます。",
+    )
+    # 上限などの入力を読んでから、選ばれる曲を描く
+    map_area = st.container()
+    cap = st.radio("上限", [_CAP_NONE, _CAP_DURATION, _CAP_COUNT], horizontal=True, key="pl_cap")
+    duration, count = _length_inputs(defaults)
+    st.caption("上限を付けると、円の中の曲から中心に近い順に、上限を超えない範囲で選びます。")
+    options = _detail_options(ctx, preference_note=None if cap != _CAP_NONE else "上限を付けたときだけ使います。")
+    request = None
+    if center is not None and (options.genre_mode == GenreMode.ALL or options.genres):
+        request = CircleRequest(
+            mood=center,
+            radius=float(radius),
+            duration_min=duration if cap == _CAP_DURATION else None,
+            track_count=count if cap == _CAP_COUNT else None,
+            genre_mode=options.genre_mode,
+            genres=options.genres,
+            novelty=options.novelty,
+            randomness=options.randomness,
+            avoid_same_artist=options.avoid_same_artist,
+            avoid_duplicates=options.avoid_duplicates,
+            smooth_order=options.smooth_order,
+            seed=options.seed,
+        )
+
+    with map_area:
+        if request is None:
+            mood_map_panel.render(candidates)
+        else:
+            # 入力のたびに再実行されるため、曲順の調整は行わず、選ばれる曲だけを求める
+            chosen = select_circle_tracks(candidates, request, defaults)
+            st.markdown(f"**選ばれる曲: {len(chosen)} 曲・合計 {format_duration(total_duration(chosen))}**")
+            mood_map_panel.render(candidates, (request, chosen))
+
+    if not _generate_button():
+        return None
+
+    if center is None:
+        st.error("円の中心にする雰囲気を選んでください。")
+        return None
+
+    if not _genres_are_valid(options):
+        return None
+
+    return request
+
+
+def _length_inputs(defaults: PlaylistDefaults) -> tuple[int, int]:
+    """再生時間（分）と曲数の入力欄。どちらを使うかは呼び出し元が決める。"""
+    duration_col, count_col = st.columns(2)
+    duration = duration_col.slider(
+        "再生時間（分）",
+        defaults.min_duration_min,
+        defaults.max_duration_min,
+        step=5,
+        key="pl_duration",
+    )
+    count = count_col.number_input(
+        "曲数",
+        min_value=1,
+        max_value=defaults.max_track_count,
+        key="pl_count",
+    )
+    return int(duration), int(count)
+
+
+def _detail_options(ctx: PageContext, *, preference_note: str | None) -> _Options:
+    """詳細設定の欄。
+
+    Args:
+        ctx: 画面の共通情報。
+        preference_note: 意外性・ランダム性を使わない場合に、入力欄を無効にして表示する説明。使う場合は None。
+    """
+    with st.expander("詳細設定"):
+        st.caption(f"選曲に使う分類結果: {CLASSIFICATION_SOURCE_LABELS[ctx.classification_source]}（設定画面で変更）")
+        genre_mode = st.radio(
+            "ジャンル",
+            list(GenreMode),
+            format_func=lambda m: GENRE_MODE_LABELS[m],
+            horizontal=True,
+            key="pl_genre_mode",
+        )
+        genres = st.multiselect(
+            "ジャンルを選ぶ（全ジャンル以外の場合）",
+            list(Genre),
+            format_func=genre_label,
+            placeholder="ジャンルを選択",
+            key="pl_genres",
+            # 一覧から選ぶだけなので文字入力を受け付けず、スマートフォンでキーボードを出さない
+            filter_mode=None,
+        )
+        # 使わない場合も入力欄は残し、無効にする。表示しないと Streamlit が入力済みの値を破棄するため
+        disabled = preference_note is not None
+        novelty = st.slider(
+            "選曲の意外性（左: 定番中心 / 右: 新しい発見）", 0.0, 1.0, step=0.1, key="pl_novelty", disabled=disabled
+        )
+        randomness = st.slider(
+            "ランダム性（左: 適合度順 / 右: ランダム）", 0.0, 1.0, step=0.1, key="pl_randomness", disabled=disabled
+        )
+        if preference_note is not None:
+            st.caption(f"選曲の意外性・ランダム性は、{preference_note}")
+
+        avoid_same_artist = st.checkbox("同じアーティストの連続を避ける", key="pl_artist")
+        avoid_duplicates = st.checkbox("同じ曲の重複を避ける", key="pl_duplicates")
+        smooth_order = st.checkbox("曲順を自然につなぐ", key="pl_smooth")
+        seed = st.number_input(
+            "seed（同じ値なら同じ結果を再現します）",
+            min_value=0,
+            max_value=_MAX_SEED,
+            key=_SEED_KEY,
+        )
+
+    return _Options(
+        genre_mode=genre_mode or GenreMode.ALL,
         genres=tuple(genres),
         novelty=novelty,
         randomness=randomness,
@@ -212,15 +351,43 @@ def _conditions_panel(defaults: PlaylistDefaults, ctx: PageContext) -> PlaylistR
     )
 
 
-def _generate(candidates: list[Candidate], request: PlaylistRequest, defaults: PlaylistDefaults) -> None:
-    result = generate_playlist(candidates, request, defaults)
+def _generate_button() -> bool:
+    if _RESULT_KEY in st.session_state:
+        st.caption("生成すると編集中の曲一覧を置き換えます。保存済みのプレイリストは残ります。")
+
+    return st.button("プレイリストを生成", type="primary", width="stretch")
+
+
+def _genres_are_valid(options: _Options) -> bool:
+    if options.genre_mode != GenreMode.ALL and not options.genres:
+        st.error("ジャンルを 1 つ以上選んでください。")
+        return False
+
+    return True
+
+
+def _generate(candidates: list[Candidate], request: Request, defaults: PlaylistDefaults) -> None:
+    result: Result
+    if isinstance(request, CircleRequest):
+        result = generate_circle_playlist(candidates, request, defaults)
+    else:
+        result = generate_playlist(candidates, request, defaults)
+
     st.session_state[_RESULT_KEY] = result
     st.session_state[_DRAFT_KEY] = list(result.tracks)
     st.session_state.pop(_SAVED_KEY, None)
-    st.session_state["pl_name"] = f"{MOOD_LABELS[request.mood]} {datetime.now():%Y-%m-%d %H:%M}"
+    st.session_state["pl_name"] = f"{_playlist_title(request)} {datetime.now():%Y-%m-%d %H:%M}"
 
 
-def _shortfall_notice(candidates: list[Candidate], result: GenerationResult, defaults: PlaylistDefaults) -> None:
+def _playlist_title(request: Request) -> str:
+    """プレイリストの既定の名前と見出しに使う、条件の短い説明。"""
+    if isinstance(request, CircleRequest):
+        return f"{MOOD_LABELS[request.mood]}周辺"
+
+    return MOOD_LABELS[request.mood]
+
+
+def _shortfall_notice(candidates: list[Candidate], result: Result, defaults: PlaylistDefaults) -> None:
     for warning in result.warnings:
         st.warning(warning)
 
@@ -241,16 +408,24 @@ def _shortfall_notice(candidates: list[Candidate], result: GenerationResult, def
         f"条件に合う曲が足りません（{amount}）。除外した曲: {excluded}\n\n"
         + "\n".join(f"- {s}" for s in shortfall.suggestions)
     )
-    if not result.request.relaxed and st.button("条件を緩和して再生成"):
-        _generate(candidates, replace(result.request, relaxed=True), defaults)
+    request = result.request
+    if isinstance(request, PlaylistRequest) and not request.relaxed and st.button("条件を緩和して再生成"):
+        _generate(candidates, replace(request, relaxed=True), defaults)
         st.rerun()
 
 
-def _draft_editor(candidates: list[Candidate], result: GenerationResult) -> None:
+def _draft_editor(candidates: list[Candidate], result: Result) -> None:
     draft: list[SelectedTrack] = st.session_state.get(_DRAFT_KEY, [])
-    relaxed = "（条件を緩和）" if result.request.relaxed else ""
-    st.subheader(f"{MOOD_LABELS[result.request.mood]}のプレイリスト")
-    st.write(f"{len(draft)} 曲・合計 {format_duration(total_duration(draft))}{relaxed}")
+    request = result.request
+    if isinstance(request, CircleRequest):
+        note = f"（マップの円・半径 {request.radius:.2f}）"
+        score_label = "中心への近さ"
+    else:
+        note = "（条件を緩和）" if request.relaxed else ""
+        score_label = "適合度"
+
+    st.subheader(f"{_playlist_title(request)}のプレイリスト")
+    st.write(f"{len(draft)} 曲・合計 {format_duration(total_duration(draft))}{note}")
     if draft:
         st.dataframe(
             [
@@ -292,7 +467,7 @@ def _draft_editor(candidates: list[Candidate], result: GenerationResult) -> None
         st.caption(f"seed: {result.request.seed}")
         st.dataframe(
             [
-                {"曲名": t.track.display_title, "適合度": "手動追加" if t.score is None else f"{t.score:.2f}"}
+                {"曲名": t.track.display_title, score_label: "手動追加" if t.score is None else f"{t.score:.2f}"}
                 for t in draft
             ],
             hide_index=True,
@@ -328,7 +503,7 @@ def _edit_track(draft: list[SelectedTrack]) -> None:
             _update_draft(remove_item(draft, selected))
 
 
-def _save_section(ctx: PageContext, result: GenerationResult) -> None:
+def _save_section(ctx: PageContext, result: Result) -> None:
     draft: list[SelectedTrack] = st.session_state.get(_DRAFT_KEY, [])
     st.subheader("名前を付けて保存")
     st.caption(f"{len(draft)} 曲・合計 {format_duration(total_duration(draft))}")
@@ -404,7 +579,7 @@ def _update_draft(draft: list[SelectedTrack]) -> None:
     st.rerun()
 
 
-def _save(ctx: PageContext, name: str, request: PlaylistRequest, draft: list[SelectedTrack]) -> int:
+def _save(ctx: PageContext, name: str, request: Request, draft: list[SelectedTrack]) -> int:
     with transaction(ctx.conn):
         return save_playlist(
             ctx.conn,

@@ -17,6 +17,7 @@ from volumio_playlist_studio.evaluation import (
 from volumio_playlist_studio.gui.context import PageContext
 from volumio_playlist_studio.gui.widgets import classification_details, genre_label, mood_label, track_label
 from volumio_playlist_studio.models import ATTRIBUTE_LABELS, Attribute, Genre, Mood, Track
+from volumio_playlist_studio.playlist import CREATION_METHOD_LABELS, CreationMethod
 from volumio_playlist_studio.storage import analysis as analysis_store
 from volumio_playlist_studio.storage.analysis import StoredClassification
 from volumio_playlist_studio.storage.database import transaction
@@ -316,6 +317,7 @@ def _playlist_feedback_section(ctx: PageContext) -> None:
             [
                 {
                     "分類結果": f.source,
+                    "作成方法": _method_label(f.method),
                     "プレイリスト数": f.playlists,
                     "不適切な曲の割合": _ratio(f.unsuitable_rate),
                     "平均満足度": "-" if f.mean_satisfaction is None else f"{f.mean_satisfaction:.1f}",
@@ -353,3 +355,11 @@ def _playlist_feedback_form(ctx: PageContext, playlists: list[SavedPlaylist]) ->
 
             st.success("プレイリストの評価を保存しました。")
             st.rerun()
+
+
+def _method_label(method: str) -> str:
+    """作成方法の表示名。将来の版で保存した未知の値は、そのまま表示する。"""
+    try:
+        return CREATION_METHOD_LABELS[CreationMethod(method)]
+    except ValueError:
+        return method

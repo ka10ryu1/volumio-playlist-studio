@@ -154,6 +154,11 @@ class PlaylistDefaults:
     # 「条件を緩和して再生成」を選んだときの適合度の閾値
     relaxed_suitability_threshold: float = 0.4
     max_track_count: int = 200
+    # 雰囲気マップの円で選ぶときの半径（マップは縦横とも 0〜1）。Jev の属性値は 0.25 刻みの 5 段階を基本とするため、
+    # 既定値は隣の段階まで含む大きさにする
+    min_circle_radius: float = 0.05
+    max_circle_radius: float = 0.75
+    default_circle_radius: float = 0.25
 
 
 @dataclass(frozen=True)

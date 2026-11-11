@@ -25,7 +25,7 @@ from volumio_playlist_studio.models import (
     Genre,
     Mood,
 )
-from volumio_playlist_studio.playlist import GenreMode
+from volumio_playlist_studio.playlist import CreationMethod, GenreMode
 from volumio_playlist_studio.sample_data import DEMO_LIBRARY_ROOT, generate_sample_audio, load_demo_library
 from volumio_playlist_studio.scanner import scan_library
 from volumio_playlist_studio.storage import settings_store
@@ -316,6 +316,78 @@ def test_mood_map_shows_tracks_classified_by_jev(demo: sqlite3.Connection) -> No
     [placed] = [row for row in mood_map_values(at) if "曲名" in row]
     assert placed["曲名"] == track.display_title
     assert (placed["x"], placed["y"]) == (0.9, 0.1)
+
+
+def save_jev_positions(conn: sqlite3.Connection, positions: list[tuple[float, float]]) -> None:
+    """デモの曲の先頭から順に、Jev で判定した明るさ・エネルギー感を保存する。"""
+    tracks = list_tracks(conn, DEMO_LIBRARY_ROOT)
+    with transaction(conn):
+        for track, (brightness, energy) in zip(tracks, positions, strict=False):
+            jev = ClassificationResult(
+                engine="jev", engine_version="jev-test", model=None, genre=Genre.ROCK, genre_confidence=None,
+                genre_probabilities=None, mood=None,
+                attributes={Attribute.BRIGHTNESS: AttributeScore(brightness), Attribute.ENERGY: AttributeScore(energy)},
+            )  # fmt: skip
+            save_classification(conn, track.id, jev)
+
+
+def test_playlist_by_circle_previews_and_saves_conditions(demo: sqlite3.Connection) -> None:
+    # リラックスの位置（0.6, 0.25）からの距離が 0、0.1、0.35 の 3 曲
+    save_jev_positions(demo, [(0.6, 0.25), (0.7, 0.25), (0.6, 0.6)])
+    at = run_view("playlist_page")
+    at.radio(key="pl_method").set_value(CreationMethod.CIRCLE).run()
+    at.radio(key="pl_center").set_value(Mood.RELAX).run()
+
+    # 既定の半径 0.25 では 2 曲。マップは条件の欄の中の 1 つだけを描く
+    assert any(m.value.startswith("**選ばれる曲: 2 曲・合計") for m in at.markdown)
+    assert sum(1 for row in mood_map_values(at) if row.get("chosen") is True) == 2
+    assert any("order" in row for row in mood_map_values(at))
+    # 上限がなければ円の中を全部選ぶため、意外性・ランダム性は使わない
+    assert at.slider(key="pl_novelty").disabled
+
+    at.slider(key="pl_radius").set_value(0.4).run()
+    assert any(m.value.startswith("**選ばれる曲: 3 曲・合計") for m in at.markdown)
+
+    at.radio(key="pl_cap").set_value("曲数").run()
+    at.number_input(key="pl_count").set_value(1).run()
+    assert any(m.value.startswith("**選ばれる曲: 1 曲・合計") for m in at.markdown)
+    assert not at.slider(key="pl_novelty").disabled
+
+    click(at, "プレイリストを生成")
+    assert any(h.value == "リラックス周辺のプレイリスト" for h in at.subheader)
+    assert len(at.dataframe[0].value) == 1
+    assert "中心への近さ" in at.dataframe[1].value.columns
+
+    click(at, "プレイリストを保存")
+    [saved] = list_playlists(demo)
+    assert saved.name.startswith("リラックス周辺 ")
+    assert saved.conditions["method"] == "circle"
+    assert saved.conditions["center"] == {"x": 0.6, "y": 0.25}
+    assert saved.conditions["radius"] == 0.4
+    assert saved.conditions["track_count"] == 1
+    assert saved.conditions["duration_min"] is None
+
+
+def test_playlist_by_circle_without_jev_selects_nothing(demo: sqlite3.Connection) -> None:
+    # デモデータはルールベースの判定だけで明るさが判定保留のため、円の中に曲がない
+    at = run_view("playlist_page")
+    at.radio(key="pl_method").set_value(CreationMethod.CIRCLE).run()
+
+    assert any(m.value.startswith("**選ばれる曲: 0 曲") for m in at.markdown)
+    assert any("Jev で判定する" in i.value for i in at.info)
+    click(at, "プレイリストを生成")
+    assert any("曲がありません" in i.value for i in at.info)
+
+
+def test_playlist_by_circle_requires_genres_when_filtering(demo: sqlite3.Connection) -> None:
+    at = run_view("playlist_page")
+    at.radio(key="pl_method").set_value(CreationMethod.CIRCLE).run()
+    at.radio(key="pl_genre_mode").set_value(GenreMode.ONLY).run()
+
+    click(at, "プレイリストを生成")
+
+    assert any("ジャンルを 1 つ以上選んでください" in e.value for e in at.error)
+    assert "pl_result" not in at.session_state
 
 
 def test_playlist_requires_genres_when_filtering(demo: sqlite3.Connection) -> None:
