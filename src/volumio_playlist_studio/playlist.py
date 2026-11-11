@@ -29,6 +29,19 @@ GENRE_MODE_LABELS: dict[GenreMode, str] = {
     GenreMode.MIX: "指定ジャンルを混ぜる",
 }
 
+
+class CreationMethod(StrEnum):
+    """プレイリストの作成方法。保存する条件に記録し、作成方法ごとの満足度を比べるのに使う。"""
+
+    MOOD = "mood"
+    CIRCLE = "circle"
+
+
+CREATION_METHOD_LABELS: dict[CreationMethod, str] = {
+    CreationMethod.MOOD: "雰囲気と長さで選ぶ",
+    CreationMethod.CIRCLE: "マップの円で選ぶ",
+}
+
 # 雰囲気ごとに（属性, 重み, 目標値）を定める。適合度は 1 - |値 - 目標値| の重み付き平均。
 # 先頭の属性を主属性とし、主属性が判定保留の曲はその雰囲気の候補にしない
 _MOOD_PROFILES: dict[Mood, tuple[tuple[Attribute, float, float], ...]] = {
@@ -114,6 +127,7 @@ class PlaylistRequest:
     def to_dict(self) -> dict[str, object]:
         """保存用の辞書に変換する。"""
         data = asdict(self)
+        data["method"] = CreationMethod.MOOD.value
         data["mood"] = self.mood.value
         data["genre_mode"] = self.genre_mode.value
         data["genres"] = [g.value for g in self.genres]
@@ -170,10 +184,10 @@ class Shortfall:
 
 
 @dataclass(frozen=True)
-class GenerationResult:
-    """プレイリストの生成結果。"""
+class GenerationResult[R]:
+    """プレイリストの生成結果。R は生成条件の型（作成方法ごとに異なる）。"""
 
-    request: PlaylistRequest
+    request: R
     tracks: list[SelectedTrack]
     shortfall: Shortfall | None
     warnings: list[str] = field(default_factory=list)
@@ -228,7 +242,7 @@ def duplicate_key(track: Track) -> str:
 
 def generate_playlist(
     candidates: list[Candidate], request: PlaylistRequest, defaults: PlaylistDefaults
-) -> GenerationResult:
+) -> GenerationResult[PlaylistRequest]:
     """条件に合う曲を選び、曲順を決める。
 
     Args:
@@ -249,15 +263,12 @@ def generate_playlist(
 
     scored = _score_candidates(candidates, request, threshold, rng, excluded)
     chosen = _select(scored, request, defaults, excluded)
-    selected = [SelectedTrack(candidate=c, score=round(s, 4)) for c, s in chosen]
-
-    warnings: list[str] = []
-    if request.smooth_order:
-        selected = _smooth_order(selected, request.mood)
-
-    if request.avoid_same_artist and not _separate_artists(selected):
-        warnings.append("同じアーティストの曲が多く、連続を避けきれない箇所があります。")
-
+    selected, warnings = arrange(
+        [SelectedTrack(candidate=c, score=round(s, 4)) for c, s in chosen],
+        request.mood,
+        smooth_order=request.smooth_order,
+        avoid_same_artist=request.avoid_same_artist,
+    )
     return GenerationResult(
         request=request,
         tracks=selected,
@@ -296,27 +307,42 @@ def _score_candidates(
             excluded[REASON_NO_DURATION] += 1
             continue
 
-        familiarity = min(1.0, candidate.usage_count / _FAMILIAR_USAGE)
-        novelty_bonus = request.novelty * (1 - familiarity) + (1 - request.novelty) * familiarity
-        rank = fit + _NOVELTY_WEIGHT * novelty_bonus + _RANDOMNESS_WEIGHT * request.randomness * noise
+        rank = fit + preference_bonus(candidate, request.novelty, request.randomness, noise)
         result.append((candidate, fit, rank))
 
     return result
 
 
-def _ranked_order(
-    scored: list[tuple[Candidate, float, float]], request: PlaylistRequest
+def preference_bonus(candidate: Candidate, novelty: float, randomness: float, noise: float) -> float:
+    """選曲の意外性とランダム性による、並べ替え用のスコアへの加点を返す。
+
+    Args:
+        candidate: 対象の曲。
+        novelty: 0 で定番中心、1 で新しい発見中心。
+        randomness: 0 で乱数を使わない、1 で最もランダム。
+        noise: -1〜1 の乱数。
+    """
+    familiarity = min(1.0, candidate.usage_count / _FAMILIAR_USAGE)
+    novelty_bonus = novelty * (1 - familiarity) + (1 - novelty) * familiarity
+    return _NOVELTY_WEIGHT * novelty_bonus + _RANDOMNESS_WEIGHT * randomness * noise
+
+
+def ranked_order(
+    scored: list[tuple[Candidate, float, float]], genre_mode: GenreMode, genres: tuple[Genre, ...]
 ) -> list[tuple[Candidate, float]]:
-    """並べ替え用のスコア順に並べる。ジャンル混合ではジャンルごとに 1 曲ずつ交互に取り出す。"""
+    """（候補, スコア, 並べ替え用のスコア）を並べ替え用のスコア順に並べ、（候補, スコア）を返す。
+
+    ジャンル混合では、指定したジャンルの順に 1 曲ずつ交互に取り出す。
+    """
     ordered = sorted(scored, key=lambda item: (-item[2], item[0].track.id))
-    if request.genre_mode != GenreMode.MIX:
+    if genre_mode != GenreMode.MIX:
         return [(c, fit) for c, fit, _ in ordered]
 
     by_genre: dict[Genre | None, list[tuple[Candidate, float]]] = {}
     for c, fit, _ in ordered:
         by_genre.setdefault(c.genre, []).append((c, fit))
 
-    queues = [by_genre[g] for g in request.genres if g in by_genre]
+    queues = [by_genre[g] for g in genres if g in by_genre]
     interleaved: list[tuple[Candidate, float]] = []
     while any(queues):
         for queue in queues:
@@ -338,7 +364,7 @@ def _select(
     seen_keys: set[str] = set()
     total = 0.0
 
-    for candidate, fit in _ranked_order(scored, request):
+    for candidate, fit in ranked_order(scored, request.genre_mode, request.genres):
         if target_sec is not None and upper_sec is not None:
             if total >= target_sec:
                 break
@@ -359,6 +385,25 @@ def _select(
         total += candidate.track.duration_sec or 0.0
 
     return chosen
+
+
+def arrange(
+    tracks: list[SelectedTrack], mood: Mood, *, smooth_order: bool, avoid_same_artist: bool
+) -> tuple[list[SelectedTrack], list[str]]:
+    """選んだ曲の曲順を決め、（曲順, 警告）を返す。
+
+    Args:
+        tracks: 選んだ曲。
+        mood: 雰囲気。最後に向けて落ち着かせるかどうかの判断に使う。
+        smooth_order: エネルギー感などが急に変わらないよう並べるかどうか。
+        avoid_same_artist: 同じアーティストの連続を避けるかどうか。
+    """
+    warnings: list[str] = []
+    ordered = _smooth_order(tracks, mood) if smooth_order else list(tracks)
+    if avoid_same_artist and not _separate_artists(ordered):
+        warnings.append("同じアーティストの曲が多く、連続を避けきれない箇所があります。")
+
+    return ordered, warnings
 
 
 def _smooth_order(tracks: list[SelectedTrack], mood: Mood) -> list[SelectedTrack]:
