@@ -30,6 +30,21 @@ GENRE_MODE_LABELS: dict[GenreMode, str] = {
 }
 
 
+class ChildrenMode(StrEnum):
+    """子供向けのアルバムの曲の扱い。子供向けかどうかは、Jev でアルバム単位に判定した結果を使う。"""
+
+    EXCLUDE = "exclude"
+    INCLUDE = "include"
+    ONLY = "only"
+
+
+CHILDREN_MODE_LABELS: dict[ChildrenMode, str] = {
+    ChildrenMode.EXCLUDE: "除外する",
+    ChildrenMode.INCLUDE: "含める",
+    ChildrenMode.ONLY: "子供向けだけ",
+}
+
+
 class CreationMethod(StrEnum):
     """プレイリストの作成方法。保存する条件に記録し、作成方法ごとの満足度を比べるのに使う。"""
 
@@ -76,6 +91,7 @@ _WIND_DOWN_MOODS = frozenset({Mood.RELAX, Mood.SLEEP})
 REASON_UNCLASSIFIED = "判定保留・未分類"
 REASON_UNSUITABLE = "雰囲気に合わない"
 REASON_GENRE = "ジャンル条件に合わない"
+REASON_CHILDREN = "子供向けの条件に合わない"
 REASON_NO_DURATION = "再生時間が不明"
 REASON_DUPLICATE = "重複"
 
@@ -90,6 +106,7 @@ class PlaylistRequest:
         novelty: 0 で定番（過去のプレイリストによく入った曲）中心、1 で新しい発見（入ったことのない曲）中心。
         randomness: 0 で適合度順、1 で最もランダム。
         relaxed: 利用者が条件の緩和を選んだ場合 True。適合度の基準を下げる。
+        children_mode: 子供向けのアルバムの曲の扱い。
     """
 
     mood: Mood
@@ -104,6 +121,7 @@ class PlaylistRequest:
     smooth_order: bool = True
     seed: int = 0
     relaxed: bool = False
+    children_mode: ChildrenMode = ChildrenMode.EXCLUDE
 
     def validate(self, defaults: PlaylistDefaults) -> None:
         """条件を検証する。
@@ -138,6 +156,7 @@ class PlaylistRequest:
         data["mood"] = self.mood.value
         data["genre_mode"] = self.genre_mode.value
         data["genres"] = [g.value for g in self.genres]
+        data["children_mode"] = self.children_mode.value
         return data
 
 
@@ -149,12 +168,14 @@ class Candidate:
         classification: 生成に使う分類結果。未分類なら None。
         genre: 選曲に使うジャンル。人手で修正したジャンルがあればそれを優先する。
         usage_count: 保存済みプレイリストに入った回数。
+        for_children: 子供向けのアルバムの曲なら True。Jev で未判定なら None。
     """
 
     track: Track
     classification: ClassificationResult | None
     genre: Genre | None
     usage_count: int = 0
+    for_children: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -208,6 +229,18 @@ class GenerationResult[R]:
 def total_duration(tracks: list[SelectedTrack]) -> float:
     """再生時間の合計を返す。再生時間が不明な曲は 0 として数える。"""
     return sum(t.track.duration_sec or 0.0 for t in tracks)
+
+
+def children_allowed(candidate: Candidate, mode: ChildrenMode) -> bool:
+    """子供向けのアルバムの曲の扱いの条件に合うか。
+
+    未判定の曲は子供向けではないものとして扱う。判定前でも、これまでどおり通常の選曲に使えるようにするため。
+    """
+    if mode == ChildrenMode.INCLUDE:
+        return True
+
+    is_children = candidate.for_children is True
+    return is_children if mode == ChildrenMode.ONLY else not is_children
 
 
 def suitability(classification: ClassificationResult | None, mood: Mood) -> float | None:
@@ -299,6 +332,10 @@ def _score_candidates(
         noise = float(rng.uniform(-1.0, 1.0))
         if request.genre_mode != GenreMode.ALL and candidate.genre not in allowed_genres:
             excluded[REASON_GENRE] += 1
+            continue
+
+        if not children_allowed(candidate, request.children_mode):
+            excluded[REASON_CHILDREN] += 1
             continue
 
         fit = suitability(candidate.classification, request.mood)
@@ -500,6 +537,9 @@ def _shortfall(
     suggestions: list[str] = []
     if excluded[REASON_GENRE]:
         suggestions.append("ジャンルの指定を「全ジャンル」にするか、ジャンルを追加する")
+
+    if excluded[REASON_CHILDREN] and request.children_mode == ChildrenMode.ONLY:
+        suggestions.append("音楽ライブラリ画面で、子供向けのアルバムを Jev で判定する")
 
     if excluded[REASON_UNSUITABLE] and not request.relaxed:
         suggestions.append("条件を緩和して再生成する（雰囲気への適合度の基準を下げる）")

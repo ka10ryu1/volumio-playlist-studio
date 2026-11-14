@@ -17,11 +17,13 @@ from volumio_playlist_studio.config import PlaylistDefaults
 from volumio_playlist_studio.models import Attribute, CustomMood, Genre, Mood
 from volumio_playlist_studio.playlist import (
     Candidate,
+    ChildrenMode,
     CreationMethod,
     GenerationResult,
     GenreMode,
     SelectedTrack,
     arrange,
+    children_allowed,
     duplicate_key,
     preference_bonus,
     ranked_order,
@@ -77,6 +79,7 @@ class CircleRequest:
         track_count: 曲数の上限。上限を付けない場合は None。再生時間の上限と同時には指定できない。
         novelty: 上限を付けたときだけ使う。0 で定番中心、1 で新しい発見中心。
         randomness: 上限を付けたときだけ使う。0 で中心に近い順、1 で最もランダム。
+        children_mode: 子供向けのアルバムの曲の扱い。
     """
 
     mood: Mood | CustomMood
@@ -91,6 +94,7 @@ class CircleRequest:
     avoid_duplicates: bool = True
     smooth_order: bool = True
     seed: int = 0
+    children_mode: ChildrenMode = ChildrenMode.EXCLUDE
 
     @property
     def center(self) -> MapPoint:
@@ -162,6 +166,7 @@ class CircleRequest:
         data["center"] = {"x": self.center.x, "y": self.center.y}
         data["genre_mode"] = self.genre_mode.value
         data["genres"] = [g.value for g in self.genres]
+        data["children_mode"] = self.children_mode.value
         return data
 
 
@@ -274,6 +279,9 @@ def select_circle_tracks(
     for candidate in sorted(candidates, key=lambda c: c.track.id):
         noise = float(rng.uniform(-1.0, 1.0))
         if request.genre_mode != GenreMode.ALL and candidate.genre not in allowed_genres:
+            continue
+
+        if not children_allowed(candidate, request.children_mode):
             continue
 
         point = track_point(candidate)

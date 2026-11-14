@@ -16,6 +16,8 @@ from streamlit.testing.v1 import AppTest
 from test_volumio_rest import FakeVolumio
 from test_volumio_socketio import FakeSocketIO
 
+from volumio_playlist_studio.albums import album_key, group_albums
+from volumio_playlist_studio.config import JEV_ALBUM_QUESTION_VERSION
 from volumio_playlist_studio.jobs import BackgroundJob
 from volumio_playlist_studio.models import (
     Attribute,
@@ -25,10 +27,11 @@ from volumio_playlist_studio.models import (
     Genre,
     Mood,
 )
-from volumio_playlist_studio.playlist import CreationMethod, GenreMode
+from volumio_playlist_studio.playlist import ChildrenMode, CreationMethod, GenreMode
 from volumio_playlist_studio.sample_data import DEMO_LIBRARY_ROOT, generate_sample_audio, load_demo_library
 from volumio_playlist_studio.scanner import scan_library
 from volumio_playlist_studio.storage import settings_store
+from volumio_playlist_studio.storage.album_judgments import AlbumJudgmentRecord, save_album_judgment
 from volumio_playlist_studio.storage.analysis import save_classification
 from volumio_playlist_studio.storage.custom_moods import CustomMoodDraft, list_custom_moods, save_custom_mood
 from volumio_playlist_studio.storage.database import connect, transaction
@@ -237,6 +240,44 @@ def test_jev_panel_shows_estimate_before_calling_api(
     assert any("未判定の曲: **4 曲**" in m.value for m in at.markdown)
     assert any("リクエスト: **4 件**" in m.value for m in at.markdown)
     assert next(b for b in at.button if b.label == "Jev で判定").disabled  # 確認前は押せない
+
+
+def test_children_panel_shows_estimate_and_judged_albums(
+    app_db: sqlite3.Connection, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    folder = tmp_path / "Music"
+    generate_sample_audio(folder, seconds=3.0)
+    scan_library(app_db, folder)
+    root = folder.as_posix()
+    tracks = list_tracks(app_db, root)
+    with transaction(app_db):
+        settings_store.set_value(app_db, settings_store.MUSIC_ROOT_KEY, root)
+        record = AlbumJudgmentRecord(root, album_key(tracks[0]), JEV_ALBUM_QUESTION_VERSION, 0.9, None)
+        save_album_judgment(app_db, record)
+
+    pending = len(group_albums(tracks)) - 1
+    assert pending > 0
+    at = run_view("library")
+    # API キーがなくても、判定済みの結果は確認できる
+    assert any("未判定の曲は子供向けではないものとして扱います" in i.value for i in at.info)
+    assert any("子供向けと判定したアルバム: 1 件" in m.value for m in at.markdown)
+
+    monkeypatch.setenv("TYPESAFE_API_KEY", "dummy-key-for-test")
+    at = run_view("library")
+    assert any(f"未判定のアルバム: **{pending} 件**" in m.value for m in at.markdown)
+    assert next(b for b in at.button if b.label == "子供向けか判定").disabled  # 確認前は押せない
+
+
+def test_playlist_excludes_children_by_default_and_can_select_only_children(demo: sqlite3.Connection) -> None:
+    at = run_view("playlist_page")
+    children = next(r for r in at.radio if r.label == "子供向けの曲")
+    assert children.value == ChildrenMode.EXCLUDE
+
+    # サンプルデータは未判定のため、子供向けだけにすると曲が選ばれず、判定を案内する
+    children.set_value(ChildrenMode.ONLY)
+    click(at, "プレイリストを生成")
+
+    assert any("子供向けの条件に合わない" in w.value and "Jev で判定" in w.value for w in at.warning)
 
 
 def test_playlist_generation_edit_save_and_register(demo: sqlite3.Connection) -> None:

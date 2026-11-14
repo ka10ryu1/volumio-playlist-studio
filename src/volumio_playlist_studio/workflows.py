@@ -11,17 +11,30 @@ from pathlib import Path
 import httpx2
 from typesafe_sdk import TypeSafeError
 
+from volumio_playlist_studio.albums import group_albums
 from volumio_playlist_studio.analyzer import analyze_pending, classify_with_rules
+from volumio_playlist_studio.classify.children import judge_album
 from volumio_playlist_studio.classify.jev import ENGINE_NAME as JEV_ENGINE
 from volumio_playlist_studio.classify.jev import JevClassifier, JevResponseError, build_questions, create_client
 from volumio_playlist_studio.classify.runner import RunLimits, classify_tracks, error_summary, fatal_reason
-from volumio_playlist_studio.config import JEV_MOOD_QUESTION_VERSION, JEV_QUESTION_VERSION, MoodDecision
+from volumio_playlist_studio.config import (
+    JEV_ALBUM_QUESTION_VERSION,
+    JEV_MOOD_QUESTION_VERSION,
+    JEV_QUESTION_VERSION,
+    MoodDecision,
+)
 from volumio_playlist_studio.custom_mood import PositionUndeterminedError, estimate_mood, validate_input
 from volumio_playlist_studio.jobs import JobControl, JobError
+from volumio_playlist_studio.models import Track
 from volumio_playlist_studio.mood_map import DISPLAY_SCALE
 from volumio_playlist_studio.scanner import scan_library
 from volumio_playlist_studio.storage import analysis as analysis_store
 from volumio_playlist_studio.storage import settings_store
+from volumio_playlist_studio.storage.album_judgments import (
+    AlbumJudgmentRecord,
+    load_children_probabilities,
+    save_album_judgment,
+)
 from volumio_playlist_studio.storage.custom_moods import (
     CustomMoodDraft,
     DuplicateNameError,
@@ -30,6 +43,7 @@ from volumio_playlist_studio.storage.custom_moods import (
 )
 from volumio_playlist_studio.storage.database import transaction, utc_now
 from volumio_playlist_studio.storage.playlists import RegistrationRecord, save_registration
+from volumio_playlist_studio.storage.tracks import list_tracks
 from volumio_playlist_studio.storage.volumio_library import replace_uris
 from volumio_playlist_studio.volumio import PlaylistExistsError, VolumioError, collect_track_uris, register_playlist
 from volumio_playlist_studio.volumio_rest import VolumioRestClient
@@ -60,6 +74,21 @@ class JevEstimate:
     tracks_this_run: int
     requests_this_run: int
     questions_per_request: int
+
+
+@dataclass(frozen=True)
+class AlbumJevEstimate:
+    """子供向けのアルバムの判定を実行する前に表示する見積もり。
+
+    Attributes:
+        pending_albums: 現在の質問定義で未判定のアルバム数。
+        albums_this_run: 今回の実行で判定するアルバム数（1 回の上限を適用後）。
+        requests_this_run: 今回の実行で送るリクエスト数（1 アルバム 1 リクエスト。SDK の自動再試行は含まない）。
+    """
+
+    pending_albums: int
+    albums_this_run: int
+    requests_this_run: int
 
 
 @dataclass(frozen=True)
@@ -158,6 +187,99 @@ def run_jev(
     )
     if summary.stopped_reason is not None:
         message += f" {summary.stopped_reason}"
+
+    return message
+
+
+def _pending_albums(conn: sqlite3.Connection, library_root: str) -> list[tuple[str, list[Track]]]:
+    """現在の質問定義で未判定のアルバムを、（アルバムのキー, 収録曲）の組でキーの順に返す。"""
+    judged = load_children_probabilities(conn, library_root, JEV_ALBUM_QUESTION_VERSION)
+    albums = group_albums(list_tracks(conn, library_root))
+    return [(key, tracks) for key, tracks in albums.items() if key not in judged]
+
+
+def estimate_children_albums(conn: sqlite3.Connection, library_root: str) -> AlbumJevEstimate:
+    """子供向けのアルバムの判定の対象アルバム数とリクエスト数を見積もる。API は呼ばない。"""
+    settings = settings_store.get_jev_settings(conn)
+    pending = len(_pending_albums(conn, library_root))
+    this_run = min(pending, settings.max_tracks_per_run)
+    return AlbumJevEstimate(pending, this_run, this_run)
+
+
+def run_children_albums(
+    conn: sqlite3.Connection,
+    library_root: str,
+    control: JobControl,
+    transport: httpx2.BaseTransport | None = None,
+) -> str:
+    """未判定のアルバムを、1 回の上限のアルバム数まで Jev で判定し、子供向けである確率を保存する。
+
+    1 アルバムの失敗では止めずに次へ進む。認証エラー・レート制限、または連続した失敗では打ち切る。
+
+    Args:
+        conn: DB 接続。
+        library_root: 音楽ライブラリのルート。
+        control: 進捗通知と中断の受け付け。
+        transport: HTTP の送受信を差し替える場合に指定する（テスト用）。
+
+    Raises:
+        JevUnavailableError: API キーが設定されていない場合。
+    """
+    settings = settings_store.get_jev_settings(conn)
+    pending = _pending_albums(conn, library_root)
+    targets = pending[: settings.max_tracks_per_run]
+    judged = failed = consecutive_failures = children = input_tokens = output_tokens = 0
+    stopped_reason: str | None = None
+    with create_client(settings, transport=transport) as client:
+        for index, (key, tracks) in enumerate(targets):
+            if control.is_cancelled():
+                stopped_reason = "ユーザーが中断しました。"
+                break
+
+            try:
+                judgment = judge_album(client, tracks, settings)
+            except (TypeSafeError, JevResponseError) as exc:
+                failed += 1
+                consecutive_failures += 1
+                # 応答本文には送信した曲名などが含まれる可能性があるため、種類とステータスだけを残す
+                logger.warning("album judgment failed: error=%s", error_summary(exc))
+                stopped_reason = fatal_reason(exc)
+                if stopped_reason is None and consecutive_failures >= settings.max_consecutive_failures:
+                    stopped_reason = (
+                        f"{consecutive_failures} 回連続で失敗したため中断しました。通信状況を確認してください。"
+                    )
+
+                if stopped_reason is not None:
+                    break
+            else:
+                consecutive_failures = 0
+                judged += 1
+                if judgment.children_probability >= settings.children_threshold:
+                    children += 1
+
+                input_tokens += judgment.input_tokens
+                output_tokens += judgment.output_tokens
+                record = AlbumJudgmentRecord(
+                    library_root, key, JEV_ALBUM_QUESTION_VERSION, judgment.children_probability, judgment.model
+                )
+                with transaction(conn):
+                    save_album_judgment(conn, record)
+
+            control.report(index + 1, len(targets))
+
+    logger.info(
+        "album judgment finished: judged=%d failed=%d remaining=%d stopped=%s",
+        judged,
+        failed,
+        len(pending) - judged,
+        stopped_reason is not None,
+    )
+    message = (
+        f"判定 {judged} アルバム（うち子供向け {children}）、失敗 {failed} アルバム、"
+        f"未判定の残り {len(pending) - judged} アルバム（入力 {input_tokens} / 出力 {output_tokens} トークン）"
+    )
+    if stopped_reason is not None:
+        message += f" {stopped_reason}"
 
     return message
 
