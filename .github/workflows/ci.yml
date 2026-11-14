@@ -68,3 +68,7 @@ jobs:
       - name: Setup and start
         shell: powershell
         run: .\tests\windows\test_setup_and_start.ps1
+
+      - name: Start with start.cmd and stop with Ctrl+C
+        shell: powershell
+        run: .\tests\windows\test_start_cmd.ps1
