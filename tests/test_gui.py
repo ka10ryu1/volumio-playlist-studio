@@ -773,6 +773,17 @@ def test_app_without_lan_mode_has_no_lan_page() -> None:
     assert not any(t.value == "PIN の入力" for t in at.title)
 
 
+def test_sidebar_links_to_github_issues() -> None:
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT)
+    at.run()
+
+    assert not at.exception
+    links = [e.proto for e in at.sidebar.get("link_button")]
+    assert [(link.label, link.url) for link in links] == [
+        ("問い合わせ（GitHub）", "https://github.com/ka10ryu1/volumio-playlist-studio/issues")
+    ]
+
+
 def test_app_in_lan_mode_requires_pin_before_any_page(
     monkeypatch: pytest.MonkeyPatch, demo: sqlite3.Connection
 ) -> None:
