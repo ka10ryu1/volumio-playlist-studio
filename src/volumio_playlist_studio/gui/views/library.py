@@ -10,6 +10,7 @@ from volumio_playlist_studio.classify.jev import ENGINE_NAME as JEV_ENGINE
 from volumio_playlist_studio.classify.rules import ENGINE_NAME as RULES_ENGINE
 from volumio_playlist_studio.config import ANALYSIS_VERSION, is_typesafe_api_key_set
 from volumio_playlist_studio.gui.context import PageContext, running_job, start_job
+from volumio_playlist_studio.gui.views import children_panel
 from volumio_playlist_studio.gui.widgets import (
     classification_details,
     format_duration,
@@ -69,6 +70,9 @@ def _actions(ctx: PageContext, library_root: str) -> None:
 
     with st.expander("Jev で判定する（API を使用）"):
         _jev_panel(ctx, library_root, busy)
+
+    with st.expander("子供向けのアルバムを判定する（Jev を使用）"):
+        children_panel.render(ctx, library_root, busy)
 
 
 def _jev_panel(ctx: PageContext, library_root: str, busy: bool) -> None:

@@ -207,6 +207,21 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         )
         """,
     ),
+    (
+        # アルバム単位の Jev の判定（子供向けである確率）。album_key は albums.album_key（フォルダとアルバムタグ）。
+        # 確率を保存し、子供向けとみなす閾値は選曲時に適用する（閾値を変えても再判定しなくて済むように）
+        """
+        CREATE TABLE album_judgments (
+            library_root TEXT NOT NULL,
+            album_key TEXT NOT NULL,
+            question_version TEXT NOT NULL,
+            model TEXT,
+            children_probability REAL NOT NULL CHECK (children_probability BETWEEN 0 AND 1),
+            created_at TEXT NOT NULL,
+            PRIMARY KEY (library_root, album_key, question_version)
+        )
+        """,
+    ),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)
