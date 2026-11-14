@@ -49,6 +49,9 @@ DATABASE_FILENAME = "studio.sqlite3"
 LOG_DIRNAME = "logs"
 LOG_FILENAME = "app.log"
 
+# 画面の「問い合わせ」から開く、このリポジトリの issue ページ
+ISSUES_URL = "https://github.com/ka10ryu1/volumio-playlist-studio/issues"
+
 
 @dataclass(frozen=True)
 class AnalysisParams:
