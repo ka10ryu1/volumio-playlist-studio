@@ -5,6 +5,7 @@
 
 import streamlit as st
 
+from volumio_playlist_studio.config import ISSUES_URL
 from volumio_playlist_studio.gui.context import open_context, show_job_message, show_jobs
 from volumio_playlist_studio.gui.lan import render_lan_page, require_pin, resolve_lan
 from volumio_playlist_studio.gui.views import dashboard, evaluation_page, library, playlist_page, settings_page
@@ -12,7 +13,13 @@ from volumio_playlist_studio.gui.views import dashboard, evaluation_page, librar
 
 def main() -> None:
     """画面を組み立てて表示する。"""
-    st.set_page_config(page_title="Volumio Playlist Studio", page_icon="🎵", layout="centered")
+    # 右上のメニューにも問い合わせ先を出す。PIN の入力前でも、ライブラリの内容を含まないため表示してよい
+    st.set_page_config(
+        page_title="Volumio Playlist Studio",
+        page_icon="🎵",
+        layout="centered",
+        menu_items={"Get help": ISSUES_URL, "Report a bug": ISSUES_URL},
+    )
     ctx = open_context()
     try:
         lan = resolve_lan(ctx.config)
@@ -44,6 +51,7 @@ def main() -> None:
             pages.append(st.Page(lambda: render_lan_page(lan, port), title="スマホで開く", icon="📱", url_path="lan"))
 
         navigation = st.navigation(pages)
+        st.sidebar.link_button("問い合わせ（GitHub）", ISSUES_URL, icon=":material/help:", width="stretch")
         show_job_message()
         show_jobs()
         navigation.run()

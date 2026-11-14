@@ -15,7 +15,7 @@ from volumio_playlist_studio.evaluation import (
     select_evaluation_sample,
 )
 from volumio_playlist_studio.gui.context import PageContext
-from volumio_playlist_studio.gui.widgets import classification_details, genre_label, mood_label, track_label
+from volumio_playlist_studio.gui.widgets import classification_details, genre_label, mood_label, page_title, track_label
 from volumio_playlist_studio.models import ATTRIBUTE_LABELS, Attribute, Genre, Mood, Track
 from volumio_playlist_studio.playlist import CREATION_METHOD_LABELS, CreationMethod
 from volumio_playlist_studio.storage import analysis as analysis_store
@@ -45,7 +45,7 @@ _MOODS = list(MOOD_COMPONENTS)
 
 def render(ctx: PageContext) -> None:
     """精度評価画面を表示する。"""
-    st.title("精度評価")
+    page_title("精度評価")
     if ctx.library_root is None:
         st.info("音楽フォルダが未設定です。")
         return
