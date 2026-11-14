@@ -942,13 +942,11 @@ def test_volumio_panel_previews_against_real_library(demo: sqlite3.Connection, f
     assert not any(b.label == "Volumio に登録" for b in at.button)
 
     click(at, "Volumio から曲の一覧を取得")
-    wait_for_jobs(at)
-    # まれに完了メッセージが表示されずに失敗するため、原因を切り分けられるよう失敗時の状態を残す
-    jobs: dict[str, BackgroundJob] = at.session_state["jobs"]
-    job_states = {name: (job.state, job.error, job.result) for name, job in jobs.items()}
-    at.run()
+    # 取得がすぐに終わると、ボタンを押した後の再実行の中で完了メッセージが表示済みになる。
+    # 無条件に再実行するとメッセージが消えるため、まだ表示していない場合だけ再実行する
+    show_job_result(at)
     assert any("6 曲の情報を取得しました" in s.value for s in at.success), (
-        f"jobs={job_states} success={[s.value for s in at.success]} error={[e.value for e in at.error]} "
+        f"success={[s.value for s in at.success]} error={[e.value for e in at.error]} "
         f"requests={len(fake_volumio.requests)}"
     )
     # サンプルデータの曲は模擬した Volumio のライブラリにないため、すべて「対応なし」になる
