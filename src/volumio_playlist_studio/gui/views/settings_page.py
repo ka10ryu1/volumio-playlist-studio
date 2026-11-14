@@ -12,7 +12,7 @@ from volumio_playlist_studio.config import (
     is_typesafe_api_key_set,
 )
 from volumio_playlist_studio.gui.context import PageContext
-from volumio_playlist_studio.gui.widgets import music_folder_form
+from volumio_playlist_studio.gui.widgets import music_folder_form, page_title
 from volumio_playlist_studio.models import CLASSIFICATION_SOURCE_LABELS, ClassificationSource
 from volumio_playlist_studio.storage import analysis as analysis_store
 from volumio_playlist_studio.storage import settings_store
@@ -27,7 +27,7 @@ _SAMPLE_RATES = [16000, 22050, 32000, 44100]
 
 def render(ctx: PageContext) -> None:
     """設定画面を表示する。"""
-    st.title("設定")
+    page_title("設定")
 
     general, advanced, logs = st.tabs(["一般", "解析・AI", "ログ"])
     with general:

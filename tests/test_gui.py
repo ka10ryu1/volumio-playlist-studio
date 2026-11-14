@@ -141,6 +141,30 @@ def test_app_starts_without_library_and_loads_demo() -> None:
     assert metrics["未解析"] == "0"
 
 
+def test_refresh_button_shows_latest_data(app_db: sqlite3.Connection) -> None:
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT)
+    at.run()
+    assert any("未設定" in i.value for i in at.info)
+
+    # 別の画面やバックグラウンド処理で DB が更新された状態にする
+    load_demo_library(app_db)
+    with transaction(app_db):
+        settings_store.set_value(app_db, settings_store.MUSIC_ROOT_KEY, DEMO_LIBRARY_ROOT)
+
+    click(at, "更新")
+
+    metrics = {m.label: m.value for m in at.metric}
+    assert metrics["登録楽曲数"] == "60"
+
+
+@pytest.mark.parametrize("view", ["dashboard", "library", "playlist_page", "evaluation_page", "settings_page"])
+def test_every_view_has_refresh_button(demo: sqlite3.Connection, view: str) -> None:
+    at = run_view(view)
+
+    assert [b.label for b in at.button].count("更新") == 1
+    click(at, "更新")
+
+
 def test_library_view_with_demo_data(demo: sqlite3.Connection) -> None:
     at = run_view("library")
 
