@@ -187,17 +187,6 @@ def test_windows_launcher_calls_internal_powershell(launcher_name: str, script_n
     assert '$venvName = if ($projectRoot -like "\\\\*") { ".venv-windows" } else { ".venv" }' in implementation
 
 
-def test_start_cmd_hands_over_to_powershell_window() -> None:
-    lines = [line for line in (ROOT / "start.cmd").read_text(encoding="ascii").splitlines() if line.strip()]
-    commands = [line for line in lines if not line.lower().startswith(("rem ", "@echo"))]
-
-    # Ctrl+C で cmd.exe の「バッチ ジョブを終了しますか (Y/N)?」が出ないよう、PowerShell を別のウィンドウで起動して
-    # バッチはすぐに終える。/b を付けると PowerShell とアプリで Ctrl+C が無効になるため付けない
-    assert commands[-1].startswith('start "Volumio Playlist Studio" powershell.exe ')
-    assert "/b" not in commands[-1].lower()
-    assert not any(line.lower().startswith(("pause", "if errorlevel")) for line in commands)
-
-
 def test_setup_uses_locked_uv_environment() -> None:
     setup = (ROOT / "scripts" / "windows" / "setup.ps1").read_text(encoding="utf-8-sig")
 
@@ -212,7 +201,8 @@ def test_start_runs_launcher_with_synced_venv() -> None:
     start = (ROOT / "scripts" / "windows" / "start.ps1").read_text(encoding="utf-8-sig")
 
     assert 'Join-Path $projectRoot "$venvName\\Scripts\\python.exe"' in start
-    assert "-m volumio_playlist_studio.launcher" in start
+    assert '$launcherArgs = @("-m", "volumio_playlist_studio.launcher")' in start
+    assert 'if ($NoBrowser) { $launcherArgs += "--no-browser" }' in start
     assert "uv run" not in start
 
 
@@ -228,3 +218,19 @@ def test_windows_ci_runs_setup_and_start_check() -> None:
     assert "runs-on: windows-latest" in workflow
     assert "shell: powershell" in workflow
     assert ".\\tests\\windows\\test_setup_and_start.ps1" in workflow
+
+
+def test_windows_ci_runs_start_cmd_and_ctrl_c_check() -> None:
+    # start.cmd の動作（すぐに終了し、別のウィンドウのアプリが Ctrl+C で確認なしに止まる）は、
+    # Windows の CI で実際に start.cmd を実行して確認する
+    script = ROOT / "tests" / "windows" / "test_start_cmd.ps1"
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert script.read_bytes().startswith(b"\xef\xbb\xbf")
+    implementation = script.read_text(encoding="utf-8-sig")
+    assert "start.cmd -NoPause -NoBrowser" in implementation
+    assert "GenerateConsoleCtrlEvent" in implementation
+    # セットアップの後に実行する
+    assert workflow.index(".\\tests\\windows\\test_setup_and_start.ps1") < workflow.index(
+        ".\\tests\\windows\\test_start_cmd.ps1"
+    )

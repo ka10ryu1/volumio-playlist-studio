@@ -1,5 +1,6 @@
 ﻿# Volumio Playlist Studio の起動処理（ルートの start.cmd から呼び出す内部スクリプト）
-param([switch]$NoPause)
+# -NoBrowser はブラウザを開かずに起動する（tests\windows\test_start_cmd.ps1 など、画面を使わない確認用）
+param([switch]$NoPause, [switch]$NoBrowser)
 
 $ErrorActionPreference = "Stop"
 # Resolve-Path は UNC パス (\\wsl.localhost\...) に "Microsoft.PowerShell.Core\FileSystem::" を付け ".." も残すため GetFullPath で正規化する
@@ -42,7 +43,9 @@ try {
     # Streamlit は stderr にも出力するため、実行中は Stop にしない
     $ErrorActionPreference = "Continue"
     # 起動後に既定のブラウザで画面を開く。終了はこのウィンドウで Ctrl+C
-    & $venvPython -m volumio_playlist_studio.launcher
+    $launcherArgs = @("-m", "volumio_playlist_studio.launcher")
+    if ($NoBrowser) { $launcherArgs += "--no-browser" }
+    & $venvPython @launcherArgs
     $appExit = $LASTEXITCODE
     $ErrorActionPreference = "Stop"
     # Ctrl+C での終了は launcher が正常終了（0）として扱う
