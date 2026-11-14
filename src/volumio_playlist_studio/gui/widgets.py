@@ -22,6 +22,18 @@ from volumio_playlist_studio.storage.database import transaction
 _SECONDS_PER_MINUTE = 60
 
 
+def page_title(title: str) -> None:
+    """画面のタイトルと、画面を描き直す「更新」ボタンを同じ行に表示する。
+
+    Streamlit は画面の中に独自のスクロール領域を持ち、スマホの「引っ張って更新」が効かないため、代わりに置く。
+    押すと再実行されるだけで、入力内容や LAN 接続の PIN 認証は保たれる。スマホで本文を押し下げないよう、
+    タイトルと別の行にはしない。
+    """
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.title(title, width="stretch")
+        st.button("更新", icon=":material/refresh:", type="tertiary", help="画面を最新の状態に描き直します")
+
+
 def format_duration(seconds: float | None) -> str:
     """秒を「分:秒」の文字列にする。不明なら「-」。"""
     if seconds is None:
