@@ -6,7 +6,7 @@ import streamlit as st
 
 from volumio_playlist_studio.catalog import dashboard_stats
 from volumio_playlist_studio.gui.context import PageContext
-from volumio_playlist_studio.gui.widgets import music_folder_form
+from volumio_playlist_studio.gui.widgets import music_folder_form, page_title
 
 
 def render(
@@ -16,7 +16,7 @@ def render(
     on_library: Callable[[], None] | None = None,
 ) -> None:
     """ダッシュボードを表示する。"""
-    st.title("ダッシュボード")
+    page_title("ダッシュボード")
     if ctx.library_root is None:
         st.info("音楽フォルダが未設定です。フォルダを指定するか、サンプルデータで試してください。")
         music_folder_form(ctx)

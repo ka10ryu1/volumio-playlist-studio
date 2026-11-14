@@ -14,7 +14,7 @@ from volumio_playlist_studio.catalog import load_candidates
 from volumio_playlist_studio.config import PlaylistDefaults
 from volumio_playlist_studio.gui.context import PageContext
 from volumio_playlist_studio.gui.views import custom_mood_panel, mood_map_panel, volumio_panel
-from volumio_playlist_studio.gui.widgets import format_duration, genre_label, track_label
+from volumio_playlist_studio.gui.widgets import format_duration, genre_label, page_title, track_label
 from volumio_playlist_studio.models import CLASSIFICATION_SOURCE_LABELS, MOOD_LABELS, CustomMood, Genre, Mood
 from volumio_playlist_studio.mood_map import (
     DISPLAY_SCALE,
@@ -122,7 +122,7 @@ def preserve_inputs() -> None:
 
 def render(ctx: PageContext) -> None:
     """プレイリスト作成画面を表示する。"""
-    st.title("プレイリスト作成")
+    page_title("プレイリスト作成")
     if ctx.library_root is None:
         st.info("音楽フォルダが未設定です。音楽ライブラリ画面で指定するか、サンプルデータで試してください。")
         return

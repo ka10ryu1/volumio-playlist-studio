@@ -17,6 +17,7 @@ from volumio_playlist_studio.gui.widgets import (
     genre_label,
     mood_label,
     music_folder_form,
+    page_title,
     track_label,
 )
 from volumio_playlist_studio.models import ClassificationResult, Track
@@ -27,7 +28,7 @@ from volumio_playlist_studio.workflows import estimate_jev, run_analysis, run_je
 
 def render(ctx: PageContext) -> None:
     """音楽ライブラリ画面を表示する。"""
-    st.title("音楽ライブラリ")
+    page_title("音楽ライブラリ")
     with st.expander("音楽フォルダ", expanded=ctx.library_root is None):
         music_folder_form(ctx)
 
