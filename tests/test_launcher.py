@@ -201,7 +201,8 @@ def test_start_runs_launcher_with_synced_venv() -> None:
     start = (ROOT / "scripts" / "windows" / "start.ps1").read_text(encoding="utf-8-sig")
 
     assert 'Join-Path $projectRoot "$venvName\\Scripts\\python.exe"' in start
-    assert "-m volumio_playlist_studio.launcher" in start
+    assert '$launcherArgs = @("-m", "volumio_playlist_studio.launcher")' in start
+    assert 'if ($NoBrowser) { $launcherArgs += "--no-browser" }' in start
     assert "uv run" not in start
 
 
@@ -217,3 +218,19 @@ def test_windows_ci_runs_setup_and_start_check() -> None:
     assert "runs-on: windows-latest" in workflow
     assert "shell: powershell" in workflow
     assert ".\\tests\\windows\\test_setup_and_start.ps1" in workflow
+
+
+def test_windows_ci_runs_start_cmd_and_ctrl_c_check() -> None:
+    # start.cmd の動作（すぐに終了し、別のウィンドウのアプリが Ctrl+C で確認なしに止まる）は、
+    # Windows の CI で実際に start.cmd を実行して確認する
+    script = ROOT / "tests" / "windows" / "test_start_cmd.ps1"
+    workflow = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+
+    assert script.read_bytes().startswith(b"\xef\xbb\xbf")
+    implementation = script.read_text(encoding="utf-8-sig")
+    assert "start.cmd -NoPause -NoBrowser" in implementation
+    assert "GenerateConsoleCtrlEvent" in implementation
+    # セットアップの後に実行する
+    assert workflow.index(".\\tests\\windows\\test_setup_and_start.ps1") < workflow.index(
+        ".\\tests\\windows\\test_start_cmd.ps1"
+    )
