@@ -31,6 +31,18 @@ JEV_ALBUM_QUESTION_VERSION = "jev-album-questions-1"
 # M4A/AAC は libsndfile が対応していないため、タグのみ取得し音響解析はエラーとして記録する。
 SUPPORTED_EXTENSIONS = frozenset({".mp3", ".flac", ".m4a", ".ogg", ".opus", ".wav", ".aif", ".aiff"})
 ANALYZABLE_EXTENSIONS = frozenset({".mp3", ".flac", ".ogg", ".opus", ".wav", ".aif", ".aiff"})
+# 画面で曲を再生するときにブラウザへ伝える形式。再生できるかはブラウザによる（M4A の ALAC や AIFF は
+# 再生できないブラウザが多い）
+AUDIO_MIME_TYPES = {
+    ".mp3": "audio/mpeg",
+    ".flac": "audio/flac",
+    ".m4a": "audio/mp4",
+    ".ogg": "audio/ogg",
+    ".opus": "audio/ogg",
+    ".wav": "audio/wav",
+    ".aif": "audio/aiff",
+    ".aiff": "audio/aiff",
+}
 
 # 環境変数名。接続先や認証情報はコードに直書きせず、環境変数または .env から読む
 DATA_DIR_ENV = "VPS_DATA_DIR"

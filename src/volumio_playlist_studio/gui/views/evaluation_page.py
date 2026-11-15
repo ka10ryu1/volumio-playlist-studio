@@ -15,7 +15,14 @@ from volumio_playlist_studio.evaluation import (
     select_evaluation_sample,
 )
 from volumio_playlist_studio.gui.context import PageContext
-from volumio_playlist_studio.gui.widgets import classification_details, genre_label, mood_label, page_title, track_label
+from volumio_playlist_studio.gui.widgets import (
+    classification_details,
+    genre_label,
+    mood_label,
+    page_title,
+    track_label,
+    track_player,
+)
 from volumio_playlist_studio.models import ATTRIBUTE_LABELS, Attribute, Genre, Mood, Track
 from volumio_playlist_studio.playlist import CREATION_METHOD_LABELS, CreationMethod
 from volumio_playlist_studio.storage import analysis as analysis_store
@@ -130,6 +137,9 @@ def _labeling_section(ctx: PageContext, tracks: dict[int, Track], labels: dict[i
         st.caption(
             f"アルバム: {tracks[track_id].album or '（不明）'}　ジャンルタグ: {tracks[track_id].genre or '（なし）'}"
         )
+        if ctx.library_root is not None:
+            track_player(ctx.library_root, tracks[track_id])
+
         with st.expander("判定の詳細・属性スコア"):
             classification_details(None if stored is None else stored.result)
 
