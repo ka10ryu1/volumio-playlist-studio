@@ -50,7 +50,7 @@ TypeSafe の Jev（System One モデル）で楽曲を分類する設計をま�
 - Score・Choice の confidence が `min_confidence`（既定 0.5）未満の回答は判定保留にする
 - `genre_determinable` の確率が閾値（既定 0.5）未満なら、ジャンルを不明にする
 - 保留にした場合も confidence と各段階の確率は保存し、精度評価で確認できるようにする
-- `genre_determinable` の確率は、閾値未満で不明にしたときだけ notes に小数 2 桁で残る（`recorded_genre_determinable` で取り出す）。設定画面の確認用レポートは、これと confidence から不明の原因の内訳と、閾値を 0.4・0.3 に下げた場合に判定済みになる曲数を、Jev を呼ばずに集計する
+- `genre_determinable` の確率は、閾値未満で不明にしたときだけ notes に小数 2 桁で残る（`recorded_genre_determinable` で取り出す）。設定画面の確認用レポートは、これと confidence から不明の原因の内訳と、閾値を 0.4・0.3 に下げた場合に判定済みになる曲数を、Jev を呼ばずに集計する。あわせて、ルールベースが不明の曲のうち、Jev の判定や同じアルバム（`albums.album_key`）の判定済みの曲のジャンルで補える曲数も試算する（結果は変更しない）
 - ムードは属性スコアから `classify/base.py` で決める（1 位のスコアが低い、または 2 位との差が小さい場合は判定保留）
 - confidence は分類の正解率ではない。正解率は人手評価との比較で確認する
 - 歌詞の内容、ボーカルの有無は質問しない。タグと基本的な特徴量からは信頼できる判定ができないため
