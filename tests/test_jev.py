@@ -26,6 +26,7 @@ from volumio_playlist_studio.config import JEV_QUESTION_VERSION, JevSettings
 from volumio_playlist_studio.jobs import JobControl
 from volumio_playlist_studio.models import Attribute, AudioFeatures, Genre, Mood, TitleSource, TrackMetadata
 from volumio_playlist_studio.storage.analysis import list_errors, load_classifications
+from volumio_playlist_studio.storage.jev_usage import JevUsageKind, list_usage
 from volumio_playlist_studio.storage.tracks import get_track, upsert_track
 from volumio_playlist_studio.workflows import estimate_jev, run_jev
 
@@ -338,3 +339,15 @@ def test_estimate_and_run_jev_workflow(db: sqlite3.Connection) -> None:
     assert estimate.questions_per_request == len(build_questions())
     assert "判定 4 曲" in message
     assert estimate_jev(db, "/music").pending_tracks == 0
+    # 応答 1 件あたり入力 400・出力 70 トークン
+    [usage] = list_usage(db)
+    assert (usage.kind, usage.question_version, usage.model) == (
+        JevUsageKind.TRACKS,
+        JEV_QUESTION_VERSION,
+        JevSettings().model,
+    )
+    assert (usage.succeeded, usage.failed, usage.input_tokens, usage.output_tokens) == (4, 0, 1600, 280)
+
+    # 判定する曲がなければ記録しない
+    run_jev(db, "/music", JobControl(), httpx2.MockTransport(Recorder([ok()])))
+    assert len(list_usage(db)) == 1

@@ -42,6 +42,7 @@ from volumio_playlist_studio.storage.album_judgments import (
     save_album_judgment,
 )
 from volumio_playlist_studio.storage.database import transaction
+from volumio_playlist_studio.storage.jev_usage import JevUsageKind, list_usage
 from volumio_playlist_studio.storage.tracks import list_tracks, upsert_track
 from volumio_playlist_studio.workflows import estimate_children_albums, run_children_albums
 
@@ -221,6 +222,10 @@ def test_estimate_and_run_judge_each_album_once(db: sqlite3.Connection) -> None:
     # 判定済みのアルバムには再び問い合わせない
     run_children_albums(db, ROOT, JobControl(), transport)
     assert len(recorder.requests) == 3
+    # 応答 1 件あたり入力 200・出力 10 トークン。判定するアルバムがなかった 2 回目は記録しない
+    [usage] = list_usage(db)
+    assert (usage.kind, usage.question_version) == (JevUsageKind.ALBUMS, JEV_ALBUM_QUESTION_VERSION)
+    assert (usage.succeeded, usage.failed, usage.input_tokens, usage.output_tokens) == (3, 0, 600, 30)
 
 
 def test_run_respects_limit_per_run(db: sqlite3.Connection) -> None:
@@ -261,6 +266,8 @@ def test_consecutive_failures_stop_the_run_but_keep_earlier_results(db: sqlite3.
     assert len(recorder.requests) == 3
     assert "2 回連続で失敗" in message
     assert len(load_children_probabilities(db, ROOT, JEV_ALBUM_QUESTION_VERSION)) == 1
+    [usage] = list_usage(db)
+    assert (usage.succeeded, usage.failed, usage.input_tokens, usage.output_tokens) == (1, 2, 200, 10)
 
 
 def test_cancelled_run_sends_nothing(db: sqlite3.Connection) -> None:
@@ -274,6 +281,7 @@ def test_cancelled_run_sends_nothing(db: sqlite3.Connection) -> None:
 
     assert recorder.requests == []
     assert "中断しました" in message
+    assert list_usage(db) == []
 
 
 def test_run_requires_api_key(db: sqlite3.Connection) -> None:

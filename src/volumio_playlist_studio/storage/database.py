@@ -222,6 +222,22 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         )
         """,
     ),
+    (
+        # Jev の実行ごとの件数とトークン数。料金の目安を確認用レポートで集計するため、完了メッセージとは別に残す
+        """
+        CREATE TABLE jev_usage (
+            id INTEGER PRIMARY KEY,
+            kind TEXT NOT NULL CHECK (kind IN ('tracks', 'albums', 'custom_mood')),
+            question_version TEXT NOT NULL,
+            model TEXT NOT NULL,
+            succeeded INTEGER NOT NULL CHECK (succeeded >= 0),
+            failed INTEGER NOT NULL CHECK (failed >= 0),
+            input_tokens INTEGER NOT NULL CHECK (input_tokens >= 0),
+            output_tokens INTEGER NOT NULL CHECK (output_tokens >= 0),
+            finished_at TEXT NOT NULL
+        )
+        """,
+    ),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)
