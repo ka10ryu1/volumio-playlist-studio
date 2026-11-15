@@ -45,9 +45,13 @@ try {
     # 起動後に既定のブラウザで画面を開く。終了はこのウィンドウで Ctrl+C
     $launcherArgs = @("-m", "volumio_playlist_studio.launcher")
     if ($NoBrowser) { $launcherArgs += "--no-browser" }
+    # 起動中なら再起動するかを確かめる（ダブルクリックで起動したときだけ。-NoPause のテストなどでは確かめない）
+    if (-not $NoPause) { $launcherArgs += "--ask-restart" }
     & $venvPython @launcherArgs
     $appExit = $LASTEXITCODE
     $ErrorActionPreference = "Stop"
+    # 別のウィンドウから再起動されたときは、このウィンドウを待たずに閉じる（新しいウィンドウでアプリが動いている）
+    if ($appExit -eq 10) { exit 0 }
     # Ctrl+C での終了は launcher が正常終了（0）として扱う
     if ($appExit -ne 0) {
         Fail "アプリが終了コード $appExit で停止しました。上のメッセージと data\logs\app.log を確認してください。"

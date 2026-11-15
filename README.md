@@ -62,7 +62,9 @@ Raspberry Pi 上の Volumio に保存した音楽を PC から SMB 共有経由�
 アプリは「Volumio Playlist Studio」という名前の PowerShell のウィンドウで動きます（`start.cmd` のウィンドウはすぐに閉じます）。終了するときは、このウィンドウで `Ctrl+C` を押すか、ウィンドウを閉じます（ブラウザのタブを閉じるだけではアプリは止まりません）。終了後にブラウザに表示される「接続エラー」は、アプリが止まったことによるもので問題ありません。
 
 - 初期設定ではこの PC からのみ接続できます
-- 起動中にもう一度 `start.cmd` を実行すると、2 つ目は起動せず、起動中の画面をブラウザで開きます
+- 起動中にもう一度 `start.cmd` を実行すると、「再起動しますか？ [y/N]」と確認します。
+  - そのまま Enter（N）: 2 つ目は起動せず、起動中の画面をブラウザで開きます
+  - `y`: 起動中のアプリを止めて、新しく起動し直します（古いウィンドウは自動で閉じます）。`git pull` で更新した後は、こちらで更新内容を反映します。解析や Jev の判定の実行中に再起動すると、その処理は中断されます
 - ポートを変えたい場合は `.env` の `VPS_PORT` を変更します
 
 音楽ファイルがなくても、画面の「サンプルデータで試す」で架空の楽曲 60 曲を読み込み、選曲から保存までの流れを試せます。
@@ -71,6 +73,7 @@ Raspberry Pi 上の Volumio に保存した音楽を PC から SMB 共有経由�
 
 - **ウィンドウがすぐ閉じる**: PowerShell で `.\setup.cmd` を実行すると、メッセージを確認できます。起動のほうは、PowerShell で `powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\windows\start.ps1` を実行すると、同じウィンドウで起動してメッセージを確認できます（`.\start.cmd` は別のウィンドウを開きます）
 - **「仮想環境が見つかりません」**: 先に `setup.cmd` を実行してください
+- **「起動中のアプリを停止できませんでした」**: 再起動の仕組みがないバージョンが起動しています。「Volumio Playlist Studio」のウィンドウで `Ctrl+C` を押して終了してから、もう一度 `start.cmd` を実行してください
 - **「ポート 8501 は別のプログラムが使用中」**: `.env` の `VPS_PORT` を別の番号（例: 8502）にしてください
 - **起動に何分もかかる**: `\\wsl.localhost\...` などネットワーク上のフォルダから起動すると、ライブラリの読み込みが遅くなります。Windows のローカルディスクに置いてください
 - **「スクリプトの実行が無効」**: ZIP でダウンロードした場合は、フォルダで `Get-ChildItem -Recurse | Unblock-File` を実行してから再実行してください
@@ -168,7 +171,7 @@ iPhone の Safari などから、自宅 Wi-Fi 経由で画面を開けます。W
 
 ```bash
 uv sync
-uv run python -m volumio_playlist_studio.launcher   # 起動（ブラウザを開かない場合は --no-browser）
+uv run python -m volumio_playlist_studio.launcher   # 起動（ブラウザを開かない場合は --no-browser、起動中のアプリを止めて起動し直す場合は --restart）
 ```
 
 | 用途 | コマンド |

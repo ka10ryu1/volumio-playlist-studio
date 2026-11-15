@@ -38,7 +38,7 @@ src/volumio_playlist_studio/
 ├── diagnostics.py     issue に貼る確認用レポート（件数・所要時間・エラーの種類。曲名・パス・接続先は含めない）
 ├── workflows.py       画面から呼ぶ一連の処理（スキャン、解析、Jev 判定、見積もり、自由記述の雰囲気の作成、子供向けのアルバムの判定）
 ├── jobs.py            バックグラウンドスレッドでの実行と進捗
-├── launcher.py        起動処理（.env の読み込み、二重起動の検知、Streamlit の起動、ブラウザを開く）
+├── launcher.py        起動処理（.env の読み込み、二重起動の検知と再起動、Streamlit の起動、ブラウザを開く）
 ├── lan_access.py      LAN モードの PIN 認証、PC の LAN の IP アドレス取得、QR コード生成
 ├── sample_data.py     架空のサンプルデータと合成音声の生成
 ├── storage/           SQLite の接続・マイグレーションと各テーブルの読み書き
@@ -52,6 +52,7 @@ tools/                 開発用のツール（インデントが戻る箇所へ
 
 - Windows では `start.cmd` → `scripts/windows/start.ps1` → `python -m volumio_playlist_studio.launcher` の順に呼び出す。WSL・Linux では launcher を直接実行する
 - launcher はプロジェクト直下の `.env` を読み、同じポートで既に Streamlit が応答していれば 2 つ目を起動せずブラウザで開くだけにする。起動する場合は Streamlit を子プロセスとして実行し、応答を確認してからブラウザを開く
+- 再起動（`--restart`、または `start.ps1` が渡す `--ask-restart` で利用者が同意した場合）では、データフォルダに停止の依頼のファイル（`stop-request-<ポート>`）を置き、ポートが空くまで待ってから起動する。Windows では別のウィンドウのプロセスに Ctrl+C を送りにくく、外から強制終了すると古いウィンドウにエラーが表示されるため、起動中の launcher が依頼を見つけて自分で Streamlit を止める。止めた launcher は終了コード 10 で終わり、`start.ps1` はこのコードなら一時停止せずにウィンドウを閉じる。30 秒以内に止まらなければ（依頼の仕組みがない古いバージョンなど）、依頼を取り下げて手動での終了を案内する。起動時には、残っていた依頼を消してから Streamlit を起動する
 - 既定では `127.0.0.1` だけで待ち受ける。`.env` の `VPS_LAN=1` のときだけ全てのネットワークで待ち受け、localhost と判定できない接続（`st.context.ip_address` が `None` でない）には、ページを表示する前に PIN の入力を求める
 - PIN と認証済みの印は `st.cache_resource` で全セッションに共有する `LanAccess` が持ち、プロセスのメモリにだけ置く。認証済みの印は Streamlit のセッション（ブラウザのタブ）に保存する
 
