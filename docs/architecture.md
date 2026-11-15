@@ -35,6 +35,7 @@ src/volumio_playlist_studio/
 ├── volumio.py         Volumio クライアントのインターフェース、モック、URI 照合、登録処理
 ├── volumio_rest.py    Volumio の REST API による読み取り専用のクライアント
 ├── catalog.py         画面・選曲エンジン向けのデータ集約（候補、ダッシュボードの集計）
+├── diagnostics.py     issue に貼る確認用レポート（件数・所要時間・エラーの種類。曲名・パス・接続先は含めない）
 ├── workflows.py       画面から呼ぶ一連の処理（スキャン、解析、Jev 判定、見積もり、自由記述の雰囲気の作成、子供向けのアルバムの判定）
 ├── jobs.py            バックグラウンドスレッドでの実行と進捗
 ├── launcher.py        起動処理（.env の読み込み、二重起動の検知、Streamlit の起動、ブラウザを開く）

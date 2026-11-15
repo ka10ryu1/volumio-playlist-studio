@@ -42,6 +42,7 @@ from volumio_playlist_studio.storage.custom_moods import (
     save_custom_mood,
 )
 from volumio_playlist_studio.storage.database import transaction, utc_now
+from volumio_playlist_studio.storage.jev_usage import JevUsageKind, JevUsageRecord, record_usage
 from volumio_playlist_studio.storage.playlists import RegistrationRecord, save_registration
 from volumio_playlist_studio.storage.tracks import list_tracks
 from volumio_playlist_studio.storage.volumio_library import replace_uris
@@ -181,6 +182,19 @@ def run_jev(
             control,
         )
 
+    if summary.classified or summary.failed:
+        usage = JevUsageRecord(
+            JevUsageKind.TRACKS,
+            JEV_QUESTION_VERSION,
+            settings.model,
+            summary.classified,
+            summary.failed,
+            classifier.input_tokens,
+            classifier.output_tokens,
+        )
+        with transaction(conn):
+            record_usage(conn, usage)
+
     message = (
         f"判定 {summary.classified} 曲、失敗 {summary.failed} 曲、未判定の残り {summary.remaining} 曲"
         f"（入力 {classifier.input_tokens} / 出力 {classifier.output_tokens} トークン）"
@@ -267,6 +281,13 @@ def run_children_albums(
 
             control.report(index + 1, len(targets))
 
+    if judged or failed:
+        usage = JevUsageRecord(
+            JevUsageKind.ALBUMS, JEV_ALBUM_QUESTION_VERSION, settings.model, judged, failed, input_tokens, output_tokens
+        )
+        with transaction(conn):
+            record_usage(conn, usage)
+
     logger.info(
         "album judgment finished: judged=%d failed=%d remaining=%d stopped=%s",
         judged,
@@ -330,6 +351,19 @@ def run_custom_mood(
                 "Jev が明るさかエネルギー感を決められませんでした（確信度が低い回答）。"
                 "説明文をより具体的にして、もう一度試してください。"
             ) from exc
+
+    # 雰囲気の保存に失敗しても、Jev の料金はかかっているため別のトランザクションで記録する
+    usage = JevUsageRecord(
+        JevUsageKind.CUSTOM_MOOD,
+        JEV_MOOD_QUESTION_VERSION,
+        settings.model,
+        1,
+        0,
+        estimate.input_tokens,
+        estimate.output_tokens,
+    )
+    with transaction(conn):
+        record_usage(conn, usage)
 
     try:
         with transaction(conn):

@@ -36,6 +36,7 @@ from volumio_playlist_studio.storage.custom_moods import (
     save_custom_mood,
 )
 from volumio_playlist_studio.storage.database import connect, transaction
+from volumio_playlist_studio.storage.jev_usage import JevUsageKind, list_usage
 from volumio_playlist_studio.workflows import UNEXPRESSIBLE_NOTE, run_custom_mood
 
 ATTRIBUTE_KEYS = {a.value for a in Attribute}
@@ -248,6 +249,9 @@ def test_run_custom_mood_saves_position_and_versions(db: sqlite3.Connection) -> 
     assert "「雨の午後」をマップに追加しました" in message
     assert "入力 300 / 出力 50 トークン" in message
     assert UNEXPRESSIBLE_NOTE not in message
+    [usage] = list_usage(db)
+    assert (usage.kind, usage.question_version) == (JevUsageKind.CUSTOM_MOOD, JEV_MOOD_QUESTION_VERSION)
+    assert (usage.succeeded, usage.failed, usage.input_tokens, usage.output_tokens) == (1, 0, 300, 50)
     # 名前は Jev に送らない
     assert "雨の午後" not in json.dumps(recorder.requests[0]["body"], ensure_ascii=False)
 
@@ -302,6 +306,8 @@ def test_run_custom_mood_failure_saves_nothing(db: sqlite3.Connection, handler: 
         run_custom_mood(db, "雨の午後", DESCRIPTION, transport=transport(recorder))
 
     assert list_custom_moods(db) == []
+    # 応答からトークン数を得られないため、使用量は記録しない
+    assert list_usage(db) == []
 
 
 def test_run_custom_mood_fails_with_connection_error(db: sqlite3.Connection) -> None:
