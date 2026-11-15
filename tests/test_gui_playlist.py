@@ -2,8 +2,7 @@
 
 import sqlite3
 
-from streamlit.testing.v1 import AppTest
-from test_gui import TIMEOUT, click, run_view
+from test_gui import click, run_view
 
 from volumio_playlist_studio.models import (
     Genre,
@@ -207,49 +206,3 @@ def test_changing_conditions_does_not_replace_draft(demo: sqlite3.Connection) ->
     assert at.dataframe[0].value.iloc[2]["曲名"] == before[0]
     click(at, "プレイリストを生成")
     assert len(at.dataframe[0].value) == 3
-
-
-def playlist_navigation_script() -> None:
-    """AppTest が直接操作できないサイドバーの代わりにボタンで標準ページ遷移を行う。"""
-    import streamlit as st
-
-    from volumio_playlist_studio.gui.context import open_context
-    from volumio_playlist_studio.gui.views import playlist_page
-
-    ctx = open_context()
-    try:
-
-        def edit() -> None:
-            playlist_page.render(ctx)
-            if st.button("別画面へ"):
-                st.switch_page(other_page)
-
-        def other() -> None:
-            if st.button("編集へ戻る"):
-                st.switch_page(edit_page)
-
-        edit_page = st.Page(edit, title="編集", url_path="edit", default=True)
-        other_page = st.Page(other, title="別画面", url_path="other")
-        playlist_page.preserve_inputs()
-        st.navigation([edit_page, other_page]).run()
-    finally:
-        ctx.conn.close()
-
-
-def test_playlist_round_trip_keeps_unsaved_inputs_and_draft(demo: sqlite3.Connection) -> None:
-    at = AppTest.from_function(playlist_navigation_script, default_timeout=TIMEOUT).run()
-    click(at, "プレイリストを生成")
-    click(at, "除外")
-    before = at.dataframe[0].value["曲名"].tolist()
-    at.text_input(key="pl_name").input("戻って編集する名前").run()
-    at.selectbox(key="pl_mood").set_value(Mood.FOCUS).run()
-    at.number_input(key="pl_count").set_value(7).run()
-    at.number_input(key="pl_seed").set_value(2024).run()
-    click(at, "別画面へ")
-    assert not at.dataframe
-    click(at, "編集へ戻る")
-    assert at.text_input(key="pl_name").value == "戻って編集する名前"
-    assert at.selectbox(key="pl_mood").value == Mood.FOCUS
-    assert at.number_input(key="pl_count").value == 7
-    assert at.number_input(key="pl_seed").value == 2024
-    assert at.dataframe[0].value["曲名"].tolist() == before

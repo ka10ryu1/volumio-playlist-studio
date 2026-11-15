@@ -12,6 +12,7 @@ from streamlit.proto.SelectWidgetFilterMode_pb2 import SelectWidgetFilterMode
 from streamlit.testing.v1 import AppTest
 
 from volumio_playlist_studio.jobs import BackgroundJob
+from volumio_playlist_studio.models import Mood
 from volumio_playlist_studio.sample_data import DEMO_LIBRARY_ROOT, load_demo_library
 from volumio_playlist_studio.storage import settings_store
 from volumio_playlist_studio.storage.database import transaction
@@ -46,6 +47,17 @@ def click(at: AppTest, label: str) -> AppTest:
     next(b for b in at.button if b.label == label).click().run()
     assert not at.exception, [e.value for e in at.exception]
     return at
+
+
+def navigate(at: AppTest, url_path: str) -> None:
+    """本体で登録されたページへ、サイドバーで選んだ場合と同じ要求を送る。"""
+    # AppTest.switch_page はファイルのページしか扱えないため、関数で定義したページでは
+    # AppTest 内部の遷移先指定を使う。ページの登録・実行と入力保持は本体に任せる。
+    at._page_hash = next(
+        page_hash for page_hash, page in at._registered_pages.items() if page.get("url_pathname") == url_path
+    )
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
 
 
 def submit(at: AppTest, form_id: str) -> None:
@@ -168,3 +180,25 @@ def test_select_widgets_do_not_accept_typing_except_track_search(demo: sqlite3.C
         "誤りの場合、正しいムード",
         "雰囲気に合わなかった曲",
     }
+
+
+def test_playlist_round_trip_keeps_unsaved_inputs_and_draft(demo: sqlite3.Connection) -> None:
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT).run()
+    click(at, "プレイリストを作成")
+    click(at, "プレイリストを生成")
+    click(at, "除外")
+    before = at.dataframe[0].value["曲名"].tolist()
+    at.text_input(key="pl_name").input("戻って編集する名前").run()
+    at.selectbox(key="pl_mood").set_value(Mood.FOCUS).run()
+    at.number_input(key="pl_count").set_value(7).run()
+    at.number_input(key="pl_seed").set_value(2024).run()
+    navigate(at, "settings")
+    assert [t.value for t in at.title] == ["設定"]
+    assert not at.dataframe
+    navigate(at, "playlist")
+    assert [t.value for t in at.title] == ["プレイリスト作成"]
+    assert at.text_input(key="pl_name").value == "戻って編集する名前"
+    assert at.selectbox(key="pl_mood").value == Mood.FOCUS
+    assert at.number_input(key="pl_count").value == 7
+    assert at.number_input(key="pl_seed").value == 2024
+    assert at.dataframe[0].value["曲名"].tolist() == before

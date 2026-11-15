@@ -24,6 +24,45 @@ def test_library_view_with_demo_data(demo: sqlite3.Connection) -> None:
     at.text_input[1].input("piano").run()
     assert not at.exception
     assert any("ルールベース" in m.value for m in at.markdown)
+    rows = at.dataframe[0].value
+    assert len(rows) == 6
+    assert set(rows["アーティスト"]) == {"Demo Quiet Piano"}
+
+
+@pytest.mark.parametrize(
+    ("query", "expected_titles"),
+    [
+        ("  PiAnO  ", [f"サンプル曲 2-{n}" for n in range(1, 7)]),
+        ("サンプル曲 2-1", ["サンプル曲 2-1"]),
+        ("サンプルアルバム 2", [f"サンプル曲 2-{n}" for n in range(1, 7)]),
+        ("new age", [f"サンプル曲 2-{n}" for n in range(1, 7)]),
+    ],
+)
+def test_library_search_filters_matching_tracks(
+    demo: sqlite3.Connection, query: str, expected_titles: list[str]
+) -> None:
+    at = run_view("library")
+    next(t for t in at.text_input if t.label.startswith("検索（")).input(query).run()
+
+    assert not at.exception
+    assert sorted(at.dataframe[0].value["曲名"].tolist()) == expected_titles
+
+
+def test_library_search_no_matches_and_clear(demo: sqlite3.Connection) -> None:
+    at = run_view("library")
+    next(t for t in at.text_input if t.label.startswith("検索（")).input("該当しない検索語").run()
+
+    assert not at.exception
+    assert len(at.dataframe[0].value) == 0
+    assert any("条件に合う曲がありません" in message.value for message in at.info)
+    assert not any(s.label == "詳細を表示する曲" for s in at.selectbox)
+
+    next(t for t in at.text_input if t.label.startswith("検索（")).input("   ").run()
+
+    assert not at.exception
+    assert len(at.dataframe[0].value) == 60
+    assert not any("条件に合う曲がありません" in message.value for message in at.info)
+    assert any(s.label == "詳細を表示する曲" for s in at.selectbox)
 
 
 def test_library_view_scans_and_analyzes_real_folder(app_db: sqlite3.Connection, tmp_path: Path) -> None:
