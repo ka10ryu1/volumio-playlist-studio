@@ -88,7 +88,7 @@ def classification_details(result: ClassificationResult | None) -> None:
 def music_folder_form(ctx: PageContext) -> None:
     """音楽フォルダの指定欄と、サンプルデータの読み込みボタンを表示する。"""
     current = "" if ctx.library_root is None or ctx.is_demo else ctx.library_root
-    with st.form("music-folder"):
+    with st.form("music-folder", enter_to_submit=False):
         text = st.text_input(
             "音楽フォルダ",
             value=current,

@@ -282,7 +282,7 @@ def test_playlist_excludes_children_by_default_and_can_select_only_children(demo
 
 def test_playlist_generation_edit_save_and_register(demo: sqlite3.Connection) -> None:
     at = run_view("playlist_page")
-    at.radio(key="pl_mood").set_value(Mood.FOCUS)
+    at.selectbox(key="pl_mood").set_value(Mood.FOCUS)
     click(at, "プレイリストを生成")
     assert any("曲・合計" in m.value for m in at.markdown)
 
@@ -329,14 +329,14 @@ def test_playlist_shortfall_offers_relaxation(demo: sqlite3.Connection) -> None:
 
 def test_playlist_offers_eleven_moods_and_suggests_jev_for_morning(demo: sqlite3.Connection) -> None:
     at = run_view("playlist_page")
-    options = at.radio(key="pl_mood").options
+    options = at.selectbox(key="pl_mood").options
     assert len(options) == 12  # 11 種類の雰囲気と「おまかせ」
     assert {"夜の街・クール", "緊迫・スリリング"} <= set(options)
     # 穏やかな夜は分類結果のムードとしてだけ使う
     assert "穏やかな夜" not in options
 
     # デモデータはルールベースの判定だけで明るさが判定保留のため、朝・爽やかの候補がない
-    at.radio(key="pl_mood").set_value(Mood.MORNING)
+    at.selectbox(key="pl_mood").set_value(Mood.MORNING)
     click(at, "プレイリストを生成")
 
     assert any("条件に合う曲が足りません" in w.value and "Jev で判定する" in w.value for w in at.warning)
@@ -408,7 +408,7 @@ def mood_markers(at: AppTest) -> dict[str, tuple[str, str]]:
 def test_mood_map_highlights_selected_mood_and_colors_custom_moods(demo: sqlite3.Connection) -> None:
     save_custom(demo, "雨の午後", 0.3, 0.3)
     at = run_view("playlist_page")
-    at.radio(key="pl_mood").set_value(Mood.NIGHT_CITY).run()
+    at.selectbox(key="pl_mood").set_value(Mood.NIGHT_CITY).run()
 
     markers = mood_markers(at)
     assert markers["夜の街・クール"] == ("diamond", PRIMARY_COLOR)
@@ -423,7 +423,7 @@ def test_mood_map_highlights_selected_mood_and_colors_custom_moods(demo: sqlite3
     assert any("選択中の雰囲気は色を変えて" in c.value for c in at.caption)
 
     # おまかせはマップにないため、どれも強調しない
-    at.radio(key="pl_mood").set_value(Mood.OMAKASE).run()
+    at.selectbox(key="pl_mood").set_value(Mood.OMAKASE).run()
     assert PRIMARY_COLOR not in {color for _, color in mood_markers(at).values()}
     assert not any("選択中の雰囲気は色を変えて" in c.value for c in at.caption)
 
@@ -432,7 +432,7 @@ def test_mood_map_highlights_custom_mood_selected_as_circle_center(demo: sqlite3
     mood_id = save_custom(demo, "嵐の夜", 0.1, 0.9)
     at = run_view("playlist_page")
     at.radio(key="pl_method").set_value(CreationMethod.CIRCLE).run()
-    at.radio(key="pl_center").set_value(f"custom:{mood_id}").run()
+    at.selectbox(key="pl_center").set_value(f"custom:{mood_id}").run()
 
     markers = mood_markers(at)
     # 形は自由記述の雰囲気のまま、色だけを変える
@@ -477,7 +477,7 @@ def test_playlist_by_circle_previews_and_saves_conditions(demo: sqlite3.Connecti
     save_jev_positions(demo, [(0.6, 0.25), (0.7, 0.25), (0.6, 0.6)])
     at = run_view("playlist_page")
     at.radio(key="pl_method").set_value(CreationMethod.CIRCLE).run()
-    at.radio(key="pl_center").set_value(Mood.RELAX).run()
+    at.selectbox(key="pl_center").set_value(Mood.RELAX).run()
 
     # 既定の半径 0.25 では 2 曲。マップは条件の欄の中の 1 つだけを描く
     assert any(m.value.startswith("**選ばれる曲: 2 曲・合計") for m in at.markdown)
@@ -531,7 +531,7 @@ def test_playlist_by_circle_around_custom_mood(demo: sqlite3.Connection) -> None
     at = run_view("playlist_page")
     at.radio(key="pl_method").set_value(CreationMethod.CIRCLE).run()
 
-    center = at.radio(key="pl_center")
+    center = at.selectbox(key="pl_center")
     assert "嵐の夜" in center.options
     center.set_value(f"custom:{mood_id}").run()
 
@@ -587,7 +587,7 @@ def test_custom_mood_details_and_delete(demo: sqlite3.Connection) -> None:
     removed_id = save_custom(demo, "年代指定", 0.8, 0.6, expressible=0.2)
     at = run_view("playlist_page")
     at.radio(key="pl_method").set_value(CreationMethod.CIRCLE).run()
-    at.radio(key="pl_center").set_value(f"custom:{removed_id}").run()
+    at.selectbox(key="pl_center").set_value(f"custom:{removed_id}").run()
     at.selectbox(key="cm_selected").set_value(removed_id).run()
 
     assert any(t.value == "説明文: 年代指定の説明" for t in at.text)
@@ -602,8 +602,8 @@ def test_custom_mood_details_and_delete(demo: sqlite3.Connection) -> None:
     assert [m.name for m in list_custom_moods(demo)] == ["残す"]
     assert any(s.value == "「年代指定」を削除しました。" for s in at.success)
     # 削除した雰囲気は円の中心の選択肢から消え、既定の中心に戻る
-    assert "年代指定" not in at.radio(key="pl_center").options
-    assert at.radio(key="pl_center").value == Mood.RELAX
+    assert "年代指定" not in at.selectbox(key="pl_center").options
+    assert at.selectbox(key="pl_center").value == Mood.RELAX
 
 
 def test_randomness_label_follows_creation_method(demo: sqlite3.Connection) -> None:
@@ -1016,7 +1016,7 @@ def test_dashboard_navigates_to_library(demo: sqlite3.Connection) -> None:
 
 def test_playlist_conditions_survive_editing_and_save(demo: sqlite3.Connection) -> None:
     at = run_view("playlist_page")
-    at.radio(key="pl_mood").set_value(Mood.OMAKASE)
+    at.selectbox(key="pl_mood").set_value(Mood.OMAKASE)
     at.radio(key="pl_length").set_value("曲数")
     at.number_input(key="pl_count").set_value(5)
     at.number_input(key="pl_seed").set_value(42)
@@ -1032,7 +1032,7 @@ def test_playlist_conditions_survive_editing_and_save(demo: sqlite3.Connection) 
     click(at, "下へ")
     assert at.text_input(key="pl_name").value == "編集中の名前"
     assert at.number_input(key="pl_count").value == 5
-    assert at.radio(key="pl_mood").value == Mood.OMAKASE
+    assert at.selectbox(key="pl_mood").value == Mood.OMAKASE
     assert at.slider(key="pl_novelty").value == 0.7
     click(at, "プレイリストを保存")
     [saved] = list_playlists(demo)
@@ -1065,6 +1065,20 @@ def test_playlist_empty_draft_can_be_restored(demo: sqlite3.Connection) -> None:
     assert not next(b for b in at.button if b.label == "プレイリストを保存").disabled
 
 
+def test_playlist_empty_name_is_rejected_without_losing_draft(demo: sqlite3.Connection) -> None:
+    at = run_view("playlist_page")
+    click(at, "プレイリストを生成")
+    before = at.dataframe[0].value["曲名"].tolist()
+    at.text_input(key="pl_name").input("   ")
+    click(at, "プレイリストを保存")
+    assert any("プレイリスト名を入力" in message.value for message in at.error)
+    assert list_playlists(demo) == []
+    assert at.dataframe[0].value["曲名"].tolist() == before
+    at.text_input(key="pl_name").input("名前を入力して保存")
+    click(at, "プレイリストを保存")
+    assert [playlist.name for playlist in list_playlists(demo)] == ["名前を入力して保存"]
+
+
 def test_library_filters_and_empty_results(demo: sqlite3.Connection) -> None:
     at = run_view("library")
     next(s for s in at.selectbox if s.label == "解析状況").select("未解析").run()
@@ -1090,14 +1104,14 @@ def test_changing_conditions_does_not_replace_draft(demo: sqlite3.Connection) ->
     at = run_view("playlist_page")
     click(at, "プレイリストを生成")
     before = at.dataframe[0].value["曲名"].tolist()
-    at.radio(key="pl_mood").set_value(Mood.FOCUS).run()
+    at.selectbox(key="pl_mood").set_value(Mood.FOCUS).run()
     at.radio(key="pl_length").set_value("曲数").run()
     at.number_input(key="pl_count").set_value(3).run()
     assert at.dataframe[0].value["曲名"].tolist() == before
     click(at, "下へ")
     assert at.dataframe[0].value["曲名"].tolist()[:2] == [before[1], before[0]]
     assert at.number_input(key="pl_count").value == 3
-    assert at.radio(key="pl_mood").value == Mood.FOCUS
+    assert at.selectbox(key="pl_mood").value == Mood.FOCUS
     # 移動後も同じ曲を選択したまま、続けて移動できる。
     click(at, "下へ")
     assert at.dataframe[0].value.iloc[2]["曲名"] == before[0]
@@ -1138,14 +1152,14 @@ def test_playlist_round_trip_keeps_unsaved_inputs_and_draft(demo: sqlite3.Connec
     click(at, "除外")
     before = at.dataframe[0].value["曲名"].tolist()
     at.text_input(key="pl_name").input("戻って編集する名前").run()
-    at.radio(key="pl_mood").set_value(Mood.FOCUS).run()
+    at.selectbox(key="pl_mood").set_value(Mood.FOCUS).run()
     at.number_input(key="pl_count").set_value(7).run()
     at.number_input(key="pl_seed").set_value(2024).run()
     click(at, "別画面へ")
     assert not at.dataframe
     click(at, "編集へ戻る")
     assert at.text_input(key="pl_name").value == "戻って編集する名前"
-    assert at.radio(key="pl_mood").value == Mood.FOCUS
+    assert at.selectbox(key="pl_mood").value == Mood.FOCUS
     assert at.number_input(key="pl_count").value == 7
     assert at.number_input(key="pl_seed").value == 2024
     assert at.dataframe[0].value["曲名"].tolist() == before

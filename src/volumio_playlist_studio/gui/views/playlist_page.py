@@ -149,7 +149,7 @@ def render(ctx: PageContext) -> None:
 
     result: Result | None = st.session_state.get(_RESULT_KEY)
     if result is not None:
-        edit_tab, save_tab = st.tabs(["2. 曲を編集", "3. 保存・連携"])
+        edit_tab, save_tab = st.tabs(["2. 曲を編集", "3. 保存・連携"], key="playlist-tabs")
         with edit_tab:
             _shortfall_notice(candidates, result, defaults)
             _draft_editor(candidates, result)
@@ -198,7 +198,7 @@ def _conditions_panel(
 
 
 def _mood_conditions(defaults: PlaylistDefaults, ctx: PageContext) -> PlaylistRequest | None:
-    mood = st.radio("雰囲気", PLAYLIST_MOODS, format_func=MOOD_LABELS.__getitem__, horizontal=True, key=_MOOD_KEY)
+    mood = st.selectbox("雰囲気", PLAYLIST_MOODS, format_func=MOOD_LABELS.__getitem__, key=_MOOD_KEY, filter_mode=None)
     by_count = st.radio("長さの指定", ["再生時間", "曲数"], horizontal=True, key="pl_length") == "曲数"
     duration, count = _length_inputs(defaults)
     st.caption("「長さの指定」で選んだ方の値を使います。")
@@ -237,12 +237,12 @@ def _circle_conditions(
     if st.session_state.get(_CENTER_KEY) not in centers:
         st.session_state.pop(_CENTER_KEY, None)
 
-    selected = st.radio(
+    selected = st.selectbox(
         "円の中心（雰囲気）",
         list(centers),
         format_func=lambda key: _center_label(centers[key]),
-        horizontal=True,
         key=_CENTER_KEY,
+        filter_mode=None,
     )
     center = None if selected is None else centers[selected]
     with st.expander("自由記述で雰囲気を作る（Jev を使用）"):
@@ -322,20 +322,22 @@ def _center_label(mood: Mood | CustomMood) -> str:
 
 def _length_inputs(defaults: PlaylistDefaults) -> tuple[int, int]:
     """再生時間（分）と曲数の入力欄。どちらを使うかは呼び出し元が決める。"""
-    duration_col, count_col = st.columns(2)
-    duration = duration_col.slider(
-        "再生時間（分）",
-        defaults.min_duration_min,
-        defaults.max_duration_min,
-        step=5,
-        key="pl_duration",
-    )
-    count = count_col.number_input(
-        "曲数",
-        min_value=1,
-        max_value=defaults.max_track_count,
-        key="pl_count",
-    )
+    with st.container(horizontal=True):
+        duration = st.slider(
+            "再生時間（分）",
+            defaults.min_duration_min,
+            defaults.max_duration_min,
+            step=5,
+            key="pl_duration",
+        )
+        count = st.number_input(
+            "曲数",
+            min_value=1,
+            max_value=defaults.max_track_count,
+            key="pl_count",
+            width=140,
+        )
+
     return int(duration), int(count)
 
 
@@ -347,7 +349,15 @@ def _detail_options(ctx: PageContext, *, ranking: str, preference_note: str | No
         ranking: ランダム性が 0 のときの選曲の順（例: 適合度順）。ランダム性の説明に使う。
         preference_note: 意外性・ランダム性を使わない場合に、入力欄を無効にして表示する説明。使う場合は None。
     """
-    with st.expander("詳細設定"):
+    with st.expander("詳細設定", key="playlist-options"):
+        with st.popover("選曲設定のヒント", icon=":material/info:"):
+            st.markdown(
+                "**意外性**は、これまでプレイリストに使っていない曲を選びやすくする設定です。\n\n"
+                "**ランダム性**を上げると、適合度が高い曲以外も選ばれやすくなります。\n\n"
+                "**seed** は抽選の番号です。同じ曲・分類結果・利用履歴・条件なら、同じ番号で選曲を再現できます。\n\n"
+                "条件を変えただけでは編集中の曲は変わりません。「プレイリストを生成」で反映します。"
+            )
+
         st.caption(f"選曲に使う分類結果: {CLASSIFICATION_SOURCE_LABELS[ctx.classification_source]}（設定画面で変更）")
         genre_mode = st.radio(
             "ジャンル",
@@ -566,8 +576,19 @@ def _save_section(ctx: PageContext, result: Result) -> None:
     draft: list[SelectedTrack] = st.session_state.get(_DRAFT_KEY, [])
     st.subheader("名前を付けて保存")
     st.caption(f"{len(draft)} 曲・合計 {format_duration(total_duration(draft))}")
-    name = st.text_input("プレイリスト名", key="pl_name")
-    if st.button("プレイリストを保存", type="primary", disabled=not draft or not name.strip()):
+    with st.popover("保存について", icon=":material/info:"):
+        st.write(
+            "名前の入力や Enter キーだけでは保存しません。「プレイリストを保存」を押してください。"
+            "保存するたびに新しいプレイリストを作ります。Volumio への登録は、保存後に下の欄で行います。"
+        )
+
+    name = st.text_input("プレイリスト名", key="pl_name", help="入力後に「プレイリストを保存」を押してください。")
+    # 名前の確定前にボタンを無効化すると、キーボードを閉じた後にもう一度タップする必要がある。
+    if st.button("プレイリストを保存", type="primary", disabled=not draft, width="stretch"):
+        if not name.strip():
+            st.error("プレイリスト名を入力してください。")
+            return
+
         playlist_id = _save(ctx, name, result.request, draft)
         st.session_state[_SAVED_KEY] = playlist_id
         st.session_state[_SAVED_NAME_KEY] = name.strip()

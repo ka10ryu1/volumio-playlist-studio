@@ -29,7 +29,7 @@ def render(ctx: PageContext) -> None:
     """設定画面を表示する。"""
     page_title("設定")
 
-    general, advanced, logs = st.tabs(["一般", "解析・AI", "ログ"])
+    general, advanced, logs = st.tabs(["一般", "解析・AI", "ログ"], key="settings-tabs")
     with general:
         st.subheader("音楽フォルダ")
         st.caption(f"現在: {'サンプルデータ' if ctx.is_demo else ctx.library_root or '未設定'}")
@@ -59,7 +59,7 @@ def _volumio_section(ctx: PageContext) -> None:
         "Volumio を変更するのは、プレイリスト作成画面で確認のうえ「Volumio に登録」を押したときだけです"
         "（新しいプレイリストを作成します）。"
     )
-    with st.form("volumio-host"):
+    with st.form("volumio-host", enter_to_submit=False):
         host = st.text_input("ホスト名または IP アドレス", value=saved or "", placeholder="volumio.local")
         if st.form_submit_button("保存"):
             _save_volumio_host(ctx, host.strip())
@@ -112,7 +112,7 @@ def _jev_section(ctx: PageContext) -> None:
     st.caption("API キーの値は画面にもログにも表示しません。")
 
     settings = settings_store.get_jev_settings(ctx.conn)
-    with st.form("jev-settings"):
+    with st.form("jev-settings", enter_to_submit=False):
         model = st.text_input("モデル", value=settings.model)
         min_confidence = st.slider(
             "この confidence 未満の回答は判定保留にする", 0.0, 1.0, settings.min_confidence, step=0.05
@@ -147,7 +147,7 @@ def _analysis_section(ctx: PageContext) -> None:
     st.caption(
         "曲の先頭・末尾を除いた範囲から、等間隔に区間を切り出して解析します。区間を増やすと精度は上がりますが時間がかかります。"
     )
-    with st.form("analysis-params"):
+    with st.form("analysis-params", enter_to_submit=False):
         segment_count = st.number_input("解析する区間の数", 1, 10, params.segment_count)
         segment_seconds = st.number_input("1 区間の長さ（秒）", 5.0, 120.0, params.segment_seconds, step=5.0)
         edge_margin = st.slider("先頭・末尾から除外する割合", 0.0, 0.45, params.edge_margin_ratio, step=0.05)
@@ -178,7 +178,7 @@ def _analysis_section(ctx: PageContext) -> None:
 
 def _engine_section(ctx: PageContext) -> None:
     st.subheader("分類エンジン")
-    st.caption("プレイリスト生成に使う分類結果を選びます。Essentia などは未導入です（docs/architecture.md 参照）。")
+    st.caption("プレイリスト生成に使う分類結果を選びます。変更後は「保存」を押してください。")
     sources = list(ClassificationSource)
     with st.form("engine"):
         source = st.radio(
