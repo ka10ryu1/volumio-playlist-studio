@@ -13,10 +13,12 @@ from volumio_playlist_studio.config import (
     JEV_QUESTION_VERSION,
     RULE_VERSION,
     AnalysisParams,
+    JevSettings,
 )
 from volumio_playlist_studio.diagnostics import ReportContext, build_report, git_revision
-from volumio_playlist_studio.models import Attribute, Genre, TitleSource, TrackMetadata
+from volumio_playlist_studio.models import Attribute, ClassificationResult, Genre, TitleSource, TrackMetadata
 from volumio_playlist_studio.sample_data import DEMO_LIBRARY_ROOT
+from volumio_playlist_studio.storage import settings_store
 from volumio_playlist_studio.storage.album_judgments import AlbumJudgmentRecord, save_album_judgment
 from volumio_playlist_studio.storage.analysis import (
     ErrorRecord,
@@ -142,6 +144,127 @@ def test_report_summarizes_jev_results_and_usage(library: sqlite3.Connection) ->
     # 成功 1 件あたりのトークン数は (800 + 140) / 2。成功がない実行は「-」
     assert "| 曲の判定 | jev-test | 2 | 1 | 800 | 140 | 470 |" in report
     assert "| 子供向けのアルバムの判定 | jev-test | 0 | 1 | 0 | 0 | - |" in report
+
+
+def _jev_unknown(
+    make_classification: ClassificationFactory, genre_confidence: float | None, notes: list[str]
+) -> ClassificationResult:
+    result = make_classification(None, engine="jev")
+    return replace(result, engine_version=JEV_QUESTION_VERSION, genre_confidence=genre_confidence, notes=notes)
+
+
+def _undeterminable(
+    make_classification: ClassificationFactory, p: str, genre_confidence: float
+) -> ClassificationResult:
+    # 保存済みの結果と同じ形の notes（classify/jev.py が判断材料の不足で不明にしたときの文言）
+    note = f"判断材料が不足しているためジャンルは不明（確率 {p}）"
+    return _jev_unknown(make_classification, genre_confidence, [note])
+
+
+@pytest.fixture
+def unknown_genres(db: sqlite3.Connection, make_classification: ClassificationFactory) -> sqlite3.Connection:
+    """ジャンルが不明になった原因を手で数えられる架空のライブラリ。"""
+    tags = [None, "  ", "秘密のジャンル", " 秘密のジャンル ", "Jazz", "Rock", None]
+    rules: list[Genre | None] = [None, None, None, None, None, Genre.ROCK, None]
+    jev = [
+        _undeterminable(make_classification, "0.45", 0.8),
+        _undeterminable(make_classification, "0.30", 0.9),  # 閾値 0.3 ちょうど
+        _undeterminable(make_classification, "0.35", 0.2),  # 閾値を下げても confidence が足りない
+        _undeterminable(make_classification, "0.05", 0.9),
+        _jev_unknown(make_classification, 0.42, ["ジャンルの confidence が低いため不明（0.42）"]),
+        _jev_unknown(make_classification, None, []),
+        replace(make_classification(Genre.JAZZ, engine="jev"), engine_version=JEV_QUESTION_VERSION),
+    ]
+    with transaction(db):
+        for i, (tag, rule_genre, jev_result) in enumerate(zip(tags, rules, jev, strict=True)):
+            track_id = upsert_track(db, ROOT, replace(_meta(f"秘密の歌手/{i:02}.flac"), genre=tag), None)
+            # 最後の曲はルールベースで未判定
+            if i < len(tags) - 1:
+                rule_result = replace(make_classification(rule_genre), engine_version=RULE_VERSION)
+                save_classification(db, track_id, rule_result)
+
+            save_classification(db, track_id, jev_result)
+
+    return db
+
+
+def test_report_breaks_down_unknown_genres(unknown_genres: sqlite3.Connection) -> None:
+    report = _report(unknown_genres, host=None)
+    section = report[report.index("### ジャンルが不明の内訳") :]
+
+    assert "ルールベース（判定済み 6 曲のうち不明 5 曲）:" in section
+    assert "- ジャンルタグが空: 2 曲" in section
+    # 前後の空白だけが違う表記は同じ種類として数える
+    assert "- タグはあるが候補に当てはまらない: 2 曲（表記 1 種類）" in section
+    assert "- タグは候補に当てはまる（分類した後にタグが変わった可能性）: 1 曲" in section
+
+    assert "Jev（判定済み 7 曲のうち不明 6 曲）:" in section
+    assert "- 判断材料が不足（genre_determinable の確率が閾値未満）: 4 曲" in section
+    assert "- ジャンルの confidence が閾値未満: 1 曲" in section
+    assert "- 理由を特定できない: 1 曲" in section
+    determinable_table = section[section.index("genre_determinable の確率（") :]
+    assert (
+        "| 0.0 以上 0.1 未満 | 1 |\n| 0.1 以上 0.2 未満 | 0 |\n| 0.2 以上 0.3 未満 | 0 |\n"
+        "| 0.3 以上 0.4 未満 | 2 |\n| 0.4 以上 0.5 未満 | 1 |"
+    ) in determinable_table
+    assert "| 0.5 以上 0.6 未満 | 0 |" in determinable_table
+    assert "| 0.9 以上 1.0 以下 | 0 |" in determinable_table
+    assert "- 現在の設定: genre_determinable の閾値 0.5、confidence の閾値 0.5" in section
+    assert "- 0.4: 1 曲（不明 6 曲 → 5 曲）" in section
+    assert "- 0.3: 2 曲（不明 6 曲 → 4 曲）" in section
+    confidence_table = section[section.index("confidence が不足した曲") :]
+    assert "| 0.3 以上 0.4 未満 | 0 |\n| 0.4 以上 0.5 未満 | 1 |" in confidence_table
+    for secret in SECRETS:
+        assert secret not in report
+
+
+def test_unknown_genre_breakdown_uses_saved_jev_settings(
+    db: sqlite3.Connection, make_classification: ClassificationFactory
+) -> None:
+    results = [
+        # 判定時の confidence の閾値が 0.7 だった曲。原因は判定時の記録から決まり、現在の設定に左右されない
+        _jev_unknown(make_classification, 0.6, ["ジャンルの confidence が低いため不明（0.60）"]),
+        _undeterminable(make_classification, "0.32", 0.8),
+        _undeterminable(make_classification, "0.31", 0.65),  # 現在の confidence の閾値 0.7 に届かない
+        # 0.499 は notes に 0.50 と残る。分布から漏らさない
+        _undeterminable(make_classification, "0.50", 0.9),
+    ]
+    with transaction(db):
+        settings_store.set_jev_settings(db, JevSettings(min_confidence=0.7, genre_determinable_threshold=0.35))
+        for i, result in enumerate(results):
+            track_id = upsert_track(db, ROOT, _meta(f"秘密の歌手/{i:02}.flac"), None)
+            save_classification(db, track_id, result)
+
+    report = _report(db, host=None)
+
+    assert "- ジャンルの confidence が閾値未満: 1 曲" in report
+    assert "理由を特定できない" not in report
+    assert "- 現在の設定: genre_determinable の閾値 0.35、confidence の閾値 0.7" in report
+    assert "| 0.3 以上 0.4 未満 | 2 |" in report
+    assert "| 0.5 以上 0.6 未満 | 1 |" in report
+    # 現在の閾値 0.35 より高い 0.4 は試算しない
+    assert "- 0.4:" not in report
+    assert "confidence が現在の閾値 0.7 以上の曲に限る" in report
+    assert "- 0.3: 2 曲（不明 4 曲 → 2 曲）" in report
+
+
+def test_unknown_genre_breakdown_omits_empty_details(library: sqlite3.Connection) -> None:
+    report = _report(library)
+
+    assert "ルールベース（判定済み 2 曲のうち不明 0 曲）:" in report
+    assert "分類した後にタグが変わった可能性" not in report
+    # 不明の 1 曲は notes も confidence もないため、原因を特定できない
+    assert "- 理由を特定できない: 1 曲" in report
+    assert "閾値を下げた場合" not in report
+    assert "confidence が不足した曲" not in report
+
+
+def test_unknown_genre_breakdown_for_empty_library(db: sqlite3.Connection) -> None:
+    report = _report(db, host=None)
+
+    assert "ルールベース（判定済み 0 曲のうち不明 0 曲）:" in report
+    assert "- ジャンルタグが空: 0 曲" in report
+    assert "Jev（判定済み 0 曲のうち不明 0 曲）:\n\n- 不明の曲なし" in report
 
 
 def test_report_does_not_contain_names_paths_host_or_error_messages(library: sqlite3.Connection) -> None:

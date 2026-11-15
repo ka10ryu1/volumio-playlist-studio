@@ -8,6 +8,7 @@ Jev の confidence は分類の正解率ではない。confidence が低い回�
 値の妥当性は精度評価の画面で人手評価と比較して確認する。
 """
 
+import re
 from dataclasses import dataclass, field
 
 import httpx2
@@ -124,6 +125,11 @@ ATTRIBUTE_QUESTIONS: dict[Attribute, tuple[str, list[str]]] = {
     ),
 }
 
+# 判断材料が不足して不明にしたときの notes。確率は結果のほかの項目に残らないため、
+# 確認用レポートでは notes から読み取る（recorded_genre_determinable）。書式を変えるときは両方を合わせる
+_UNDETERMINABLE_NOTE = "判断材料が不足しているためジャンルは不明（確率 {:.2f}）"
+_UNDETERMINABLE_NOTE_PATTERN = re.compile(r"判断材料が不足しているためジャンルは不明（確率 (\d+\.\d+)）")
+
 _STATE_NOTE = (
     "The audio descriptors were computed automatically from short excerpts and may be inaccurate. "
     "Estimated tempo may be half or double the true tempo. Lyrics and vocals were not analyzed."
@@ -200,7 +206,7 @@ def _parse(response: SystemOneResponse, settings: JevSettings, mood_decision: Mo
     genre: Genre | None = Genre(genre_answer.choice)
     if determinable < settings.genre_determinable_threshold:
         genre = None
-        notes.append(f"判断材料が不足しているためジャンルは不明（確率 {determinable:.2f}）")
+        notes.append(_UNDETERMINABLE_NOTE.format(determinable))
     elif genre_answer.confidence < settings.min_confidence:
         genre = None
         notes.append(f"ジャンルの confidence が低いため不明（{genre_answer.confidence:.2f}）")
@@ -228,6 +234,22 @@ def _parse(response: SystemOneResponse, settings: JevSettings, mood_decision: Mo
         attributes=attributes,
         notes=notes,
     )
+
+
+def recorded_genre_determinable(result: ClassificationResult) -> float | None:
+    """保存済みの結果から、ジャンルを判断できる確率（`genre_determinable`）を取り出す。
+
+    確率は、閾値未満でジャンルを不明にしたときだけ notes に小数 2 桁で残している。
+
+    Returns:
+        notes に残っている確率。閾値以上だった場合など、残っていなければ None。
+    """
+    for note in result.notes:
+        match = _UNDETERMINABLE_NOTE_PATTERN.fullmatch(note)
+        if match is not None:
+            return float(match.group(1))
+
+    return None
 
 
 def create_client(
