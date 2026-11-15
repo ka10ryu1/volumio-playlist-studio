@@ -225,14 +225,14 @@ def create_playlist(page: Page) -> None:
     page.get_by_role("button", name="プレイリストを生成").click()
     wait_for_app(page)
     expect(page.get_by_label("雰囲気", exact=True)).not_to_be_visible()
-    page.get_by_role("tab", name="3. 保存・連携").click()
+    page.get_by_role("tab", name="3. 保存").click()
     page.get_by_label("プレイリスト名", exact=True).fill(PLAYLIST_NAME)
     page.get_by_label("プレイリスト名", exact=True).press("Enter")
     wait_for_app(page)
-    expect(page.get_by_role("tab", name="3. 保存・連携")).to_have_attribute("aria-selected", "true")
+    expect(page.get_by_role("tab", name="3. 保存")).to_have_attribute("aria-selected", "true")
     expect(page.get_by_label("プレイリスト名", exact=True)).to_have_value(PLAYLIST_NAME)
     # 入力を確定しただけでは保存しない。ボタンを一度押すと保存できることも確認する。
-    expect(page.get_by_text("登録するプレイリスト", exact=True)).not_to_be_visible()
+    expect(page.get_by_text(f"「{PLAYLIST_NAME}」を保存しました。", exact=False)).not_to_be_visible()
     # 空欄を確定した後に名前を入力し、入力欄からボタンへ直接一度タップしても保存できる。
     page.get_by_label("プレイリスト名", exact=True).fill("")
     page.get_by_label("プレイリスト名", exact=True).press("Enter")
@@ -240,7 +240,7 @@ def create_playlist(page: Page) -> None:
     page.get_by_label("プレイリスト名", exact=True).fill(PLAYLIST_NAME)
     page.get_by_role("button", name="プレイリストを保存").click()
     wait_for_app(page)
-    expect(page.get_by_role("tab", name="3. 保存・連携")).to_have_attribute("aria-selected", "true")
+    expect(page.get_by_role("tab", name="3. 保存")).to_have_attribute("aria-selected", "true")
     expect(page.get_by_text(f"「{PLAYLIST_NAME}」を保存しました。", exact=False)).to_be_visible()
 
 
@@ -250,7 +250,7 @@ def check_playlist_keyboard(page: Page) -> None:
     name.fill("キーボード操作の確認")
     name.press("Tab")
     wait_for_app(page)
-    expect(page.get_by_role("tab", name="3. 保存・連携")).to_have_attribute("aria-selected", "true")
+    expect(page.get_by_role("tab", name="3. 保存")).to_have_attribute("aria-selected", "true")
     expect(name).to_have_value("キーボード操作の確認")
     viewport = page.viewport_size
     if viewport is None:
@@ -260,7 +260,7 @@ def check_playlist_keyboard(page: Page) -> None:
     page.set_viewport_size({"width": viewport["width"], "height": viewport["height"] // 2})
     name.focus()
     page.set_viewport_size(viewport)
-    expect(page.get_by_role("tab", name="3. 保存・連携")).to_have_attribute("aria-selected", "true")
+    expect(page.get_by_role("tab", name="3. 保存")).to_have_attribute("aria-selected", "true")
     expect(name).to_have_value("キーボード操作の確認")
     name.fill(PLAYLIST_NAME)
     name.press("Enter")
@@ -318,9 +318,14 @@ def capture_pages(page: Page, base_url: str, output_dir: Path, suffix: str) -> N
     save_full_page(page, output_dir / f"playlist-save{suffix}.png")
     page.get_by_role("tab", name="2. 曲を編集").click()
     save_full_page(page, output_dir / ("playlist.png" if not suffix else f"playlist-edit{suffix}.png"))
-
     if not suffix:
+        # 作成画面の状態を確認してから、管理画面に移る
         check_navigation_state(page)
+
+    open_page(page, base_url, "manage")
+    expect(page.get_by_text("表の左端で選ぶと", exact=False)).to_be_visible()
+    save_full_page(page, output_dir / f"manage{suffix}.png")
+    if not suffix:
         open_page(page, base_url, "evaluation")
         page.get_by_role("tab", name="集計・CSV").click()
         save_full_page(page, output_dir / "evaluation-metrics.png")
@@ -355,7 +360,7 @@ def check_navigation_state(page: Page) -> None:
     wait_for_app(page)
     selection = page.get_by_test_id("stSelectbox").filter(has=page.get_by_text("編集する曲", exact=True))
     before = selection.inner_text()
-    page.get_by_role("tab", name="3. 保存・連携").click()
+    page.get_by_role("tab", name="3. 保存").click()
     page.get_by_label("プレイリスト名", exact=True).fill("移動後も保持する名前")
     page.get_by_label("プレイリスト名", exact=True).press("Enter")
     wait_for_app(page)
@@ -366,7 +371,7 @@ def check_navigation_state(page: Page) -> None:
     if selection.inner_text() != before:
         raise RuntimeError("playlist changed after navigation")
 
-    page.get_by_role("tab", name="3. 保存・連携").click()
+    page.get_by_role("tab", name="3. 保存").click()
     if page.get_by_label("プレイリスト名", exact=True).input_value() != "移動後も保持する名前":
         raise RuntimeError("playlist name was lost after navigation")
 

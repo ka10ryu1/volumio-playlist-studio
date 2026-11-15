@@ -46,11 +46,17 @@
 
 ![プレイリスト編集](images/playlist.png)
 
-「3. 保存・連携」で名前を付けて保存し、その下でVolumioとの照合・登録を行います。
-実機との読み取り専用の照合と、モックでの登録という既存の範囲は変えていません。
-キャプチャではモックを使い、確認チェックは未選択です。
+「3. 保存」で名前を付けて保存します。保存後は「プレイリスト管理を開く」から管理画面に移れます。
 
 ![プレイリスト保存](images/playlist-save.png)
+
+## プレイリスト管理
+
+保存したプレイリストを表で一覧します。表の左端で 1 件選ぶと曲目とVolumioとの照合・登録欄を表示し、複数選ぶとまとめて削除できます。
+「雰囲気」タブでは、自由記述の雰囲気の作成（Jev）と、作成済みの雰囲気の確認・一括削除を行います。
+実機との読み取り専用の照合と、確認のうえでの登録という既存の範囲は変えていません。
+
+![プレイリスト管理](images/manage.png)
 
 ## ダッシュボード
 
@@ -96,7 +102,8 @@
 | 選曲条件・初期表示範囲 | [画像](images/playlist-mobile.png) | [画像](images/playlist-tablet.png) | [画像](images/playlist-top.png) |
 | 選曲条件・全体 | [画像](images/playlist-conditions-mobile.png) | [画像](images/playlist-conditions-tablet.png) | [画像](images/playlist-conditions.png) |
 | 曲の編集 | [画像](images/playlist-edit-mobile.png) | [画像](images/playlist-edit-tablet.png) | [画像](images/playlist.png) |
-| 保存・連携 | [画像](images/playlist-save-mobile.png) | [画像](images/playlist-save-tablet.png) | [画像](images/playlist-save.png) |
+| 保存 | [画像](images/playlist-save-mobile.png) | [画像](images/playlist-save-tablet.png) | [画像](images/playlist-save.png) |
+| プレイリスト管理 | - | - | [画像](images/manage.png) |
 | 評価入力 | [画像](images/evaluation-mobile.png) | [画像](images/evaluation-tablet.png) | [画像](images/evaluation.png) |
 | 一般設定 | [画像](images/settings-mobile.png) | [画像](images/settings-tablet.png) | [画像](images/settings.png) |
 
