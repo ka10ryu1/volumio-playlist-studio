@@ -1,4 +1,4 @@
-"""プレイリスト作成画面の「Volumio に登録」部分。
+"""プレイリスト管理画面の「Volumio に登録」部分。
 
 照合先は次の 2 つから選ぶ。
 - Volumio 実機: REST API で取得した曲の一覧と照合してプレビューを表示し、確認のうえ WebSocket API で登録する。
@@ -15,7 +15,6 @@ from volumio_playlist_studio.storage.database import transaction, utc_now
 from volumio_playlist_studio.storage.playlists import (
     RegistrationRecord,
     SavedPlaylist,
-    list_playlists,
     list_registrations,
     save_registration,
 )
@@ -56,35 +55,22 @@ def _mock_client(library_root: str, tracks: list[Track]) -> MockVolumioClient:
     return client
 
 
-def render(ctx: PageContext, saved_playlist_id: int | None) -> None:
-    """Volumio への登録欄を表示する。"""
-    playlists = list_playlists(ctx.conn)
-    if not playlists:
-        return
+def render(ctx: PageContext, playlist: SavedPlaylist) -> None:
+    """保存済みのプレイリストを Volumio に登録する欄を表示する。"""
+    st.subheader("Volumio に登録")
+    host = ctx.volumio_host
+    sources = [_SOURCE_REAL, _SOURCE_MOCK] if host else [_SOURCE_MOCK]
+    source = st.radio("照合先", sources, horizontal=True, key="volumio-source")
+    if host is None:
+        st.caption("Volumio の接続先を設定画面で設定すると、Volumio 実機のライブラリと照合できます。")
 
-    with st.expander("Volumio に登録", expanded=saved_playlist_id is not None):
-        ids = [p.id for p in playlists]
-        default = ids.index(saved_playlist_id) if saved_playlist_id in ids else 0
-        # 一覧から選ぶだけなので文字入力を受け付けず、スマートフォンでキーボードを出さない
-        playlist = st.selectbox(
-            "登録するプレイリスト", playlists, index=default, format_func=lambda p: p.name, filter_mode=None
-        )
-        if playlist is None:
-            return
+    tracks = [t for t in (get_track(ctx.conn, e.track_id) for e in playlist.entries) if t is not None]
+    if source == _SOURCE_REAL and host is not None:
+        _real_preview_and_register(ctx, host, playlist, tracks)
+    else:
+        _mock_preview_and_register(ctx, playlist, tracks)
 
-        host = ctx.volumio_host
-        sources = [_SOURCE_REAL, _SOURCE_MOCK] if host else [_SOURCE_MOCK]
-        source = st.radio("照合先", sources, horizontal=True, key="volumio-source")
-        if host is None:
-            st.caption("Volumio の接続先を設定画面で設定すると、Volumio 実機のライブラリと照合できます。")
-
-        tracks = [t for t in (get_track(ctx.conn, e.track_id) for e in playlist.entries) if t is not None]
-        if source == _SOURCE_REAL and host is not None:
-            _real_preview_and_register(ctx, host, playlist, tracks)
-        else:
-            _mock_preview_and_register(ctx, playlist, tracks)
-
-        _history(ctx, playlist)
+    _history(ctx, playlist)
 
 
 def _real_preview_and_register(ctx: PageContext, host: str, playlist: SavedPlaylist, tracks: list[Track]) -> None:

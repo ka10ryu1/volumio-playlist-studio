@@ -1,7 +1,7 @@
-"""プレイリスト作成画面の「自由記述で雰囲気を作る」。説明文から Jev がマップ上の位置を決める。
+"""プレイリスト管理画面の「雰囲気」タブ。自由記述の雰囲気の作成・一覧・削除を行う。
 
-作った雰囲気は DB に保存し、円の中心の候補に加える。Jev を呼ぶのは「作成」を押したときの 1 回だけで、
-円の調整やプレイリストの生成では呼ばない。
+説明文から Jev がマップ上の位置を決め、作った雰囲気は DB に保存してプレイリスト作成画面の円の中心の候補に加える。
+Jev を呼ぶのは「作成」を押したときの 1 回だけで、円の調整やプレイリストの生成では呼ばない。
 """
 
 import logging
@@ -11,6 +11,7 @@ import streamlit as st
 from volumio_playlist_studio.config import is_typesafe_api_key_set
 from volumio_playlist_studio.custom_mood import MAX_DESCRIPTION_LENGTH, MAX_NAME_LENGTH
 from volumio_playlist_studio.gui.context import PageContext, running_job, start_job
+from volumio_playlist_studio.gui.widgets import reset_selection_if_changed
 from volumio_playlist_studio.models import ATTRIBUTE_LABELS, CustomMood
 from volumio_playlist_studio.mood_map import DISPLAY_SCALE
 from volumio_playlist_studio.storage.custom_moods import delete_custom_mood
@@ -23,12 +24,14 @@ logger = logging.getLogger(__name__)
 _JOB_NAME = "雰囲気の作成（Jev）"
 _NAME_KEY = "cm_name"
 _DESCRIPTION_KEY = "cm_description"
-_SELECTED_KEY = "cm_selected"
-_DELETED_NAME_KEY = "cm_deleted_name"
+_TABLE_KEY = "cm_table"
+_LISTED_IDS_KEY = "cm_table_ids"
+_DELETED_NAMES_KEY = "cm_deleted_names"
 
 
 def render(ctx: PageContext, custom_moods: list[CustomMood]) -> None:
     """自由記述の雰囲気の作成欄と、作成済みの雰囲気の一覧を表示する。"""
+    st.subheader("自由記述で雰囲気を作る（Jev を使用）")
     _create_form(ctx)
     _saved_moods(ctx, custom_moods)
 
@@ -36,7 +39,7 @@ def render(ctx: PageContext, custom_moods: list[CustomMood]) -> None:
 def _create_form(ctx: PageContext) -> None:
     st.caption(
         "説明文（例: 雨の日曜の午後、本を読みながら）から、Jev がマップ上の位置を決めます。"
-        "作った雰囲気は円の中心に選べます。"
+        "作った雰囲気は、プレイリスト作成の「マップの円で選ぶ」で円の中心に選べます。"
     )
     if not is_typesafe_api_key_set():
         st.info("TYPESAFE_API_KEY が未設定のため、Jev は利用できません。既存の雰囲気を円の中心にしてください。")
@@ -60,32 +63,46 @@ def _create_form(ctx: PageContext) -> None:
 
 
 def _saved_moods(ctx: PageContext, custom_moods: list[CustomMood]) -> None:
-    deleted_name: str | None = st.session_state.pop(_DELETED_NAME_KEY, None)
-    if deleted_name is not None:
-        st.success(f"「{deleted_name}」を削除しました。")
+    st.subheader("作成済みの雰囲気")
+    deleted_names: list[str] | None = st.session_state.pop(_DELETED_NAMES_KEY, None)
+    if deleted_names:
+        st.success(f"{_quoted(deleted_names)}を削除しました。")
 
     if not custom_moods:
+        st.caption("作成した雰囲気はありません。")
         return
 
-    st.markdown("**作成済みの雰囲気**")
-    by_id = {m.id: m for m in custom_moods}
-    # 削除した雰囲気が選択されたまま残らないようにする
-    if st.session_state.get(_SELECTED_KEY) not in by_id:
-        st.session_state.pop(_SELECTED_KEY, None)
-
-    selected_id = st.selectbox(
-        "雰囲気",
-        list(by_id),
-        format_func=lambda mood_id: by_id[mood_id].name,
-        key=_SELECTED_KEY,
-        # 一覧から選ぶだけなので文字入力を受け付けず、スマートフォンでキーボードを出さない
-        filter_mode=None,
+    reset_selection_if_changed(_TABLE_KEY, _LISTED_IDS_KEY, [m.id for m in custom_moods])
+    st.caption("表の左端で選ぶと詳細を表示します。複数選ぶと、まとめて削除できます。")
+    event = st.dataframe(
+        [
+            {
+                "名前": m.name,
+                "説明文": m.description,
+                "明るさ": round(m.x * DISPLAY_SCALE, 1),
+                "エネルギー感": round(m.y * DISPLAY_SCALE, 1),
+                "作成日時": m.created_at,
+            }
+            for m in custom_moods
+        ],
+        hide_index=True,
+        width="stretch",
+        on_select="rerun",
+        selection_mode="multi-row",
+        key=_TABLE_KEY,
     )
-    if selected_id is None:
+    selected = [custom_moods[i] for i in event.selection.rows if i < len(custom_moods)]
+    if not selected:
         return
 
-    mood = by_id[selected_id]
+    if len(selected) == 1:
+        _details(ctx, selected[0])
 
+    _delete_form(ctx, selected)
+
+
+def _details(ctx: PageContext, mood: CustomMood) -> None:
+    st.markdown(f"**{mood.name}**")
     # 説明文は利用者の入力のため、Markdown として解釈させない
     st.text(f"説明文: {mood.description}")
     position = f"明るさ {mood.x * DISPLAY_SCALE:.1f}・エネルギー感 {mood.y * DISPLAY_SCALE:.1f}"
@@ -107,22 +124,35 @@ def _saved_moods(ctx: PageContext, custom_moods: list[CustomMood]) -> None:
             width="stretch",
         )
 
+
+def _delete_form(ctx: PageContext, moods: list[CustomMood]) -> None:
     st.caption("削除しても、この雰囲気で作ったプレイリストの条件には名前・説明文・位置が残ります。")
-    confirmed = st.checkbox("この雰囲気を削除します", key=f"cm-delete-confirm-{mood.id}")
-    if st.button("雰囲気を削除", disabled=not confirmed, key=f"cm-delete-{mood.id}"):
-        _delete(ctx, mood)
+    # 選び直したときに確認のチェックを引き継がないよう、選んだ雰囲気ごとに別のキーを使う
+    ids = "-".join(str(m.id) for m in moods)
+    confirmed = st.checkbox(f"選んだ {len(moods)} 件の雰囲気を削除します", key=f"cm-delete-confirm-{ids}")
+    if st.button("選んだ雰囲気を削除", disabled=not confirmed, key=f"cm-delete-{ids}"):
+        _delete(ctx, moods)
 
 
-def _delete(ctx: PageContext, mood: CustomMood) -> None:
+def _delete(ctx: PageContext, moods: list[CustomMood]) -> None:
     try:
         with transaction(ctx.conn):
-            delete_custom_mood(ctx.conn, mood.id)
+            for mood in moods:
+                delete_custom_mood(ctx.conn, mood.id)
+
     except ValueError:
-        # 別のタブなどで先に削除された場合。一覧を読み直して表示を合わせる
-        logger.warning("custom_mood_delete_skipped: custom_mood_id=%d reason=not_found", mood.id)
-        st.error("この雰囲気は既に削除されています。")
+        # 別のタブなどで先に削除された場合。途中まで削除せず、一覧を読み直して選び直してもらう
+        logger.warning("custom_mood_delete_skipped: count=%d reason=not_found", len(moods))
+        st.session_state.pop(_TABLE_KEY, None)
+        st.error("既に削除された雰囲気が含まれていたため、削除しませんでした。一覧を確認して選び直してください。")
         return
 
-    logger.info("custom_mood_deleted: custom_mood_id=%d", mood.id)
-    st.session_state[_DELETED_NAME_KEY] = mood.name
+    logger.info("custom_moods_deleted: ids=%s", ",".join(str(m.id) for m in moods))
+    st.session_state[_DELETED_NAMES_KEY] = [m.name for m in moods]
+    # 削除後の一覧で、別の行が選ばれたままにならないようにする
+    st.session_state.pop(_TABLE_KEY, None)
     st.rerun()
+
+
+def _quoted(names: list[str]) -> str:
+    return "".join(f"「{name}」" for name in names)

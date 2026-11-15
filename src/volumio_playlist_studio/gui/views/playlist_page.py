@@ -1,10 +1,10 @@
 """プレイリスト作成画面。
 
-条件を指定した生成（雰囲気と長さ、またはマップの円で選ぶ）、雰囲気マップの表示、編集・保存・Volumio 登録の
-プレビュー、保存済みの削除を行う。
+条件を指定した生成（雰囲気と長さ、またはマップの円で選ぶ）、雰囲気マップの表示、編集・保存を行う。
+保存済みのプレイリストの一覧・削除・Volumio への登録と、自由記述の雰囲気の作成・削除はプレイリスト管理画面で行う。
 """
 
-import logging
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 from datetime import datetime
 
@@ -13,7 +13,7 @@ import streamlit as st
 from volumio_playlist_studio.catalog import load_candidates
 from volumio_playlist_studio.config import PlaylistDefaults
 from volumio_playlist_studio.gui.context import PageContext
-from volumio_playlist_studio.gui.views import custom_mood_panel, mood_map_panel, volumio_panel
+from volumio_playlist_studio.gui.views import mood_map_panel
 from volumio_playlist_studio.gui.widgets import format_duration, genre_label, page_title, track_label
 from volumio_playlist_studio.models import CLASSIFICATION_SOURCE_LABELS, MOOD_LABELS, CustomMood, Genre, Mood
 from volumio_playlist_studio.mood_map import (
@@ -43,16 +43,7 @@ from volumio_playlist_studio.playlist import (
 )
 from volumio_playlist_studio.storage.custom_moods import list_custom_moods
 from volumio_playlist_studio.storage.database import transaction
-from volumio_playlist_studio.storage.playlists import (
-    PlaylistDraft,
-    PlaylistEntry,
-    SavedPlaylist,
-    delete_playlist,
-    list_playlists,
-    save_playlist,
-)
-
-logger = logging.getLogger(__name__)
+from volumio_playlist_studio.storage.playlists import PlaylistDraft, PlaylistEntry, save_playlist
 
 _METHOD_KEY = "pl_method"
 _MOOD_KEY = "pl_mood"
@@ -61,7 +52,6 @@ _RESULT_KEY = "pl_result"
 _DRAFT_KEY = "pl_draft"
 _SAVED_KEY = "pl_saved_id"
 _SAVED_NAME_KEY = "pl_saved_name"
-_DELETED_NAME_KEY = "pl_deleted_name"
 _SEED_KEY = "pl_seed"
 # 円の中心の選択肢のうち、自由記述の雰囲気を表す値の接頭辞（既存の雰囲気は Mood の値そのもの）
 _CUSTOM_CENTER_PREFIX = "custom:"
@@ -120,8 +110,13 @@ def preserve_inputs() -> None:
             values[key] = st.session_state[key]
 
 
-def render(ctx: PageContext) -> None:
-    """プレイリスト作成画面を表示する。"""
+def render(ctx: PageContext, *, on_manage: Callable[[], None] | None = None) -> None:
+    """プレイリスト作成画面を表示する。
+
+    Args:
+        ctx: 画面の共通情報。
+        on_manage: プレイリスト管理画面へ移動する処理。1 画面だけを表示するテストでは None。
+    """
     page_title("プレイリスト作成")
     if ctx.library_root is None:
         st.info("音楽フォルダが未設定です。音楽ライブラリ画面で指定するか、サンプルデータで試してください。")
@@ -134,9 +129,9 @@ def render(ctx: PageContext) -> None:
     defaults = PlaylistDefaults()
     candidates = load_candidates(ctx.conn, ctx.library_root, ctx.classification_source)
     custom_moods = list_custom_moods(ctx.conn)
-    st.caption("1 条件を選ぶ → 2 曲を編集 → 3 保存・連携")
+    st.caption("1 条件を選ぶ → 2 曲を編集 → 3 保存（一覧・削除・Volumio への登録はプレイリスト管理画面）")
     with st.expander("1. 選曲の条件", expanded=_RESULT_KEY not in st.session_state):
-        request = _conditions_panel(defaults, ctx, candidates, custom_moods)
+        request = _conditions_panel(defaults, ctx, candidates, custom_moods, on_manage)
 
     # 円で選ぶ場合は、条件の欄の中にマップを描く
     if st.session_state.get(_METHOD_KEY) != CreationMethod.CIRCLE:
@@ -149,20 +144,21 @@ def render(ctx: PageContext) -> None:
 
     result: Result | None = st.session_state.get(_RESULT_KEY)
     if result is not None:
-        edit_tab, save_tab = st.tabs(["2. 曲を編集", "3. 保存・連携"], key="playlist-tabs")
+        edit_tab, save_tab = st.tabs(["2. 曲を編集", "3. 保存"], key="playlist-tabs")
         with edit_tab:
             _shortfall_notice(candidates, result, defaults)
             _draft_editor(candidates, result)
 
         with save_tab:
-            _save_section(ctx, result)
-            volumio_panel.render(ctx, st.session_state.get(_SAVED_KEY))
-
-    _saved_playlists_section(ctx)
+            _save_section(ctx, result, on_manage)
 
 
 def _conditions_panel(
-    defaults: PlaylistDefaults, ctx: PageContext, candidates: list[Candidate], custom_moods: list[CustomMood]
+    defaults: PlaylistDefaults,
+    ctx: PageContext,
+    candidates: list[Candidate],
+    custom_moods: list[CustomMood],
+    on_manage: Callable[[], None] | None,
 ) -> Request | None:
     # 入力は都度セッションに反映する。曲の編集やページ移動で、未生成の条件も失わないようにする。
     if _SEED_KEY not in st.session_state:
@@ -192,7 +188,7 @@ def _conditions_panel(
             key=_METHOD_KEY,
         )
         if method == CreationMethod.CIRCLE:
-            return _circle_conditions(defaults, ctx, candidates, custom_moods)
+            return _circle_conditions(defaults, ctx, candidates, custom_moods, on_manage)
 
         return _mood_conditions(defaults, ctx)
 
@@ -230,7 +226,11 @@ def _mood_conditions(defaults: PlaylistDefaults, ctx: PageContext) -> PlaylistRe
 
 
 def _circle_conditions(
-    defaults: PlaylistDefaults, ctx: PageContext, candidates: list[Candidate], custom_moods: list[CustomMood]
+    defaults: PlaylistDefaults,
+    ctx: PageContext,
+    candidates: list[Candidate],
+    custom_moods: list[CustomMood],
+    on_manage: Callable[[], None] | None,
 ) -> CircleRequest | None:
     centers = _center_options(custom_moods)
     # 削除した自由記述の雰囲気が選択されたまま残らないようにする
@@ -245,8 +245,12 @@ def _circle_conditions(
         filter_mode=None,
     )
     center = None if selected is None else centers[selected]
-    with st.expander("自由記述で雰囲気を作る（Jev を使用）"):
-        custom_mood_panel.render(ctx, custom_moods)
+    with st.container(horizontal=True, vertical_alignment="center"):
+        st.caption(
+            "説明文から雰囲気を作る（Jev を使用）・作った雰囲気を削除するには、"
+            "プレイリスト管理画面の「雰囲気」タブを開きます。"
+        )
+        _manage_button(on_manage, key="pl-manage-moods")
 
     shown_radius = st.slider(
         "円の大きさ（半径）",
@@ -572,14 +576,15 @@ def _edit_track(draft: list[SelectedTrack]) -> None:
             _update_draft(remove_item(draft, selected))
 
 
-def _save_section(ctx: PageContext, result: Result) -> None:
+def _save_section(ctx: PageContext, result: Result, on_manage: Callable[[], None] | None) -> None:
     draft: list[SelectedTrack] = st.session_state.get(_DRAFT_KEY, [])
     st.subheader("名前を付けて保存")
     st.caption(f"{len(draft)} 曲・合計 {format_duration(total_duration(draft))}")
     with st.popover("保存について", icon=":material/info:"):
         st.write(
             "名前の入力や Enter キーだけでは保存しません。「プレイリストを保存」を押してください。"
-            "保存するたびに新しいプレイリストを作ります。Volumio への登録は、保存後に下の欄で行います。"
+            "保存するたびに新しいプレイリストを作ります。保存したプレイリストの一覧・削除・Volumio への登録は、"
+            "プレイリスト管理画面で行います。"
         )
 
     name = st.text_input("プレイリスト名", key="pl_name", help="入力後に「プレイリストを保存」を押してください。")
@@ -592,65 +597,23 @@ def _save_section(ctx: PageContext, result: Result) -> None:
         playlist_id = _save(ctx, name, result.request, draft)
         st.session_state[_SAVED_KEY] = playlist_id
         st.session_state[_SAVED_NAME_KEY] = name.strip()
-        st.success(f"「{name.strip()}」を保存しました。下の「Volumio に登録」から Volumio に登録できます。")
+        st.success(f"「{name.strip()}」を保存しました。プレイリスト管理画面から Volumio に登録できます。")
     elif st.session_state.get(_SAVED_KEY) is not None and st.session_state.get(_SAVED_NAME_KEY) == name.strip():
-        st.caption("保存済みです。Volumio との照合・登録は下の欄で行えます。")
+        st.caption("保存済みです。Volumio との照合・登録はプレイリスト管理画面で行えます。")
     else:
         st.caption("編集中の内容は未保存です。曲を変更したら、もう一度保存してください。")
 
-
-def _saved_playlists_section(ctx: PageContext) -> None:
-    """保存済みのプレイリストを削除する欄。生成前でも操作できるよう、結果の有無によらず表示する。"""
-    deleted_name: str | None = st.session_state.pop(_DELETED_NAME_KEY, None)
-    playlists = list_playlists(ctx.conn)
-    if not playlists and deleted_name is None:
-        return
-
-    with st.expander("保存済みのプレイリスト", expanded=deleted_name is not None):
-        if deleted_name is not None:
-            st.success(f"「{deleted_name}」を削除しました。")
-
-        if not playlists:
-            st.caption("保存したプレイリストがありません。")
-            return
-
-        playlist = st.selectbox(
-            "プレイリスト",
-            playlists,
-            format_func=lambda p: f"{p.name}（{p.created_at}）",
-            key="pl_manage",
-            # 一覧から選ぶだけなので文字入力を受け付けず、スマートフォンでキーボードを出さない
-            filter_mode=None,
-        )
-        if playlist is None:
-            return
-
-        st.caption(f"{len(playlist.entries)} 曲・合計 {format_duration(playlist.total_duration_sec)}")
-        st.caption(
-            "削除すると、このアプリの一覧に表示されなくなります。満足度などの評価は精度評価の集計に残ります。"
-            "Volumio に登録したプレイリストは削除しません（Volumio の画面で削除してください）。"
-        )
-        confirmed = st.checkbox("このプレイリストを削除します", key=f"pl-delete-confirm-{playlist.id}")
-        if st.button("プレイリストを削除", disabled=not confirmed, key=f"pl-delete-{playlist.id}"):
-            _delete(ctx, playlist)
+    _manage_button(on_manage, key="pl-manage-playlists")
 
 
-def _delete(ctx: PageContext, playlist: SavedPlaylist) -> None:
-    try:
-        with transaction(ctx.conn):
-            delete_playlist(ctx.conn, playlist.id)
-    except ValueError:
-        # 別のタブなどで先に削除された場合。一覧を読み直して表示を合わせる
-        logger.warning("playlist_delete_skipped: playlist_id=%d reason=not_found_or_deleted", playlist.id)
-        st.error("このプレイリストは既に削除されています。")
-        return
-
-    logger.info("playlist_deleted: playlist_id=%d", playlist.id)
-    if st.session_state.get(_SAVED_KEY) == playlist.id:
-        st.session_state.pop(_SAVED_KEY, None)
-
-    st.session_state[_DELETED_NAME_KEY] = playlist.name
-    st.rerun()
+def _manage_button(on_manage: Callable[[], None] | None, *, key: str) -> None:
+    st.button(
+        "プレイリスト管理を開く",
+        icon=":material/folder_open:",
+        on_click=on_manage,
+        disabled=on_manage is None,
+        key=key,
+    )
 
 
 def _update_draft(draft: list[SelectedTrack]) -> None:
