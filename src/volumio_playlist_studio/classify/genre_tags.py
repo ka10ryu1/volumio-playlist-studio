@@ -2,7 +2,7 @@
 
 表記は、ID3v1 のジャンル一覧（Winamp の拡張を含む）、Apple Music（iTunes）のジャンル、Discogs のジャンルを
 参考に整理している。候補にないジャンル（ブルース、イージーリスニングなど）は、近い候補に寄せる。
-国・言語（邦楽、洋楽、Japanese）、聴く場面や対象（クリスマス、子供向け、フィットネス）、編成や形式
+国・言語・地域（邦楽、洋楽、Japanese、East Asia）、聴く場面や対象（クリスマス、子供向け、フィットネス）、編成や形式
 （Instrumental、Vocal、Ballad）、音楽ではないもの（Comedy、Spoken Word）はジャンルを表さないため、
 推測で当てはめず不明とする。照合の規則を変えた場合は `config.RULE_VERSION` を更新する。
 """
@@ -179,6 +179,7 @@ _GENRE_PATTERNS: tuple[tuple[Genre, re.Pattern[str]], ...] = tuple(
                 "映画",
                 "ミュージカル",
                 "劇伴",
+                "ディズニー",
             ],
         ),
         (
@@ -198,6 +199,8 @@ _GENRE_PATTERNS: tuple[tuple[Genre, re.Pattern[str]], ...] = tuple(
                 "シンガー[\\s・]?ソングライター",
             ],
         ),
+        # 「World Pop」の World は地域を表すだけで、曲調はポップのため、ワールドより先に照合する
+        (Genre.POP, [r"world[\s-]?pop"]),
         (
             Genre.WORLD,
             [
@@ -235,7 +238,7 @@ _GENRE_PATTERNS: tuple[tuple[Genre, re.Pattern[str]], ...] = tuple(
                 r"tribal",
                 r"\bnative\b",
                 r"celtic",
-                r"afric",
+                r"african",
                 r"\bafro",
                 r"arabesque",
                 r"khaleeji",
