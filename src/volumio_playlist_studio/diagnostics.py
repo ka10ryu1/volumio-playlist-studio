@@ -10,11 +10,14 @@ import sqlite3
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path, PurePosixPath
 
 from volumio_playlist_studio.analyzer import is_analyzable
 from volumio_playlist_studio.catalog import UNKNOWN_GENRE_LABEL, dashboard_stats
+from volumio_playlist_studio.classify.genre_tags import genre_from_tag
 from volumio_playlist_studio.classify.jev import ENGINE_NAME as JEV_ENGINE
+from volumio_playlist_studio.classify.jev import recorded_genre_determinable
 from volumio_playlist_studio.classify.rules import ENGINE_NAME as RULES_ENGINE
 from volumio_playlist_studio.config import (
     ANALYSIS_VERSION,
@@ -22,6 +25,7 @@ from volumio_playlist_studio.config import (
     JEV_MOOD_QUESTION_VERSION,
     JEV_QUESTION_VERSION,
     RULE_VERSION,
+    JevSettings,
 )
 from volumio_playlist_studio.models import (
     ATTRIBUTE_LABELS,
@@ -50,6 +54,10 @@ _USAGE_KIND_LABELS = {
     JevUsageKind.ALBUMS: "子供向けのアルバムの判定",
     JevUsageKind.CUSTOM_MOOD: "自由記述の雰囲気",
 }
+# ジャンルを判断できる確率の閾値を下げた場合に、判定済みになる曲数を試算する値（高い順）
+_RELAXED_DETERMINABLE_THRESHOLDS = (0.4, 0.3)
+# 確率・confidence の分布を数える区間の幅
+_HISTOGRAM_STEP = 0.1
 _MATCH_LABELS = {
     MatchStatus.MATCHED: "対応あり",
     MatchStatus.UNMATCHED: "対応なし",
@@ -90,12 +98,16 @@ def build_report(conn: sqlite3.Connection, context: ReportContext) -> str:
         lines += ["", "**注意: サンプルデータを表示中です（実際の音楽ライブラリの集計ではありません）。**"]
 
     tracks = list_tracks(conn, root)
+    track_ids = {t.id for t in tracks}
+    rules = _results(analysis_store.load_classifications(conn, RULES_ENGINE, RULE_VERSION), track_ids)
+    jev = _results(analysis_store.load_classifications(conn, JEV_ENGINE, JEV_QUESTION_VERSION), track_ids)
     for section in (
         _scan_section(conn, root, tracks),
         _analysis_section(conn, root, tracks),
         _tag_section(tracks),
         _volumio_section(conn, context.volumio_host, tracks),
-        _jev_section(conn, root, tracks),
+        _jev_section(conn, root, rules, jev),
+        _unknown_genre_section(tracks, rules, jev, JevSettings()),
     ):
         lines += ["", *section]
 
@@ -263,10 +275,12 @@ def _volumio_section(conn: sqlite3.Connection, host: str | None, tracks: list[Tr
     return lines
 
 
-def _jev_section(conn: sqlite3.Connection, root: str, tracks: list[Track]) -> list[str]:
-    track_ids = {t.id for t in tracks}
-    jev = _results(analysis_store.load_classifications(conn, JEV_ENGINE, JEV_QUESTION_VERSION), track_ids)
-    rules = _results(analysis_store.load_classifications(conn, RULES_ENGINE, RULE_VERSION), track_ids)
+def _jev_section(
+    conn: sqlite3.Connection,
+    root: str,
+    rules: dict[int, ClassificationResult],
+    jev: dict[int, ClassificationResult],
+) -> list[str]:
     albums = conn.execute(
         "SELECT COUNT(*) FROM album_judgments WHERE library_root = ? AND question_version = ?",
         (root, JEV_ALBUM_QUESTION_VERSION),
@@ -315,6 +329,108 @@ def _genre_comparison(rules: dict[int, ClassificationResult], jev: dict[int, Cla
         for g in genres
         if rule_counts[g] or jev_counts[g]
     ]
+    return lines
+
+
+def _unknown_genre_section(
+    tracks: list[Track],
+    rules: dict[int, ClassificationResult],
+    jev: dict[int, ClassificationResult],
+    settings: JevSettings,
+) -> list[str]:
+    """ジャンルが不明になった原因の内訳。保存済みの結果から計算し、Jev には問い合わせない。
+
+    タグの表記そのものはライブラリの内容にあたるため出さず、件数と表記の種類の数だけを出す。
+    """
+    return [
+        "### ジャンルが不明の内訳",
+        "",
+        *_rules_unknown_breakdown(tracks, rules),
+        "",
+        *_jev_unknown_breakdown(jev, settings),
+    ]
+
+
+def _rules_unknown_breakdown(tracks: list[Track], rules: dict[int, ClassificationResult]) -> list[str]:
+    unknown_ids = {i for i, r in rules.items() if r.genre is None}
+    lines = [f"ルールベース（判定済み {len(rules)} 曲のうち不明 {len(unknown_ids)} 曲）:", ""]
+    tags = [(t.genre or "").strip() for t in tracks if t.id in unknown_ids]
+    empty = sum(1 for tag in tags if not tag)
+    unmatched = [tag for tag in tags if tag and genre_from_tag(tag) is None]
+    lines += [
+        f"- ジャンルタグが空: {empty} 曲",
+        f"- タグはあるが候補に当てはまらない: {len(unmatched)} 曲（表記 {len(set(unmatched))} 種類）",
+    ]
+    # 分類した後にタグが変わり、まだ分類し直していない曲
+    stale = len(tags) - empty - len(unmatched)
+    if stale:
+        lines.append(f"- タグは候補に当てはまる（分類した後にタグが変わった可能性）: {stale} 曲")
+
+    return lines
+
+
+def _jev_unknown_breakdown(jev: dict[int, ClassificationResult], settings: JevSettings) -> list[str]:
+    unknown = [r for r in jev.values() if r.genre is None]
+    lines = [f"Jev（判定済み {len(jev)} 曲のうち不明 {len(unknown)} 曲）:", ""]
+    if not unknown:
+        return [*lines, "- 不明の曲なし"]
+
+    # 判断材料が不足した曲の確率と confidence。confidence は不明にした場合も保存している
+    undeterminable: list[tuple[float, float | None]] = []
+    low_confidence: list[float] = []
+    for r in unknown:
+        determinable = recorded_genre_determinable(r)
+        if determinable is not None:
+            undeterminable.append((determinable, r.genre_confidence))
+        elif r.genre_confidence is not None and r.genre_confidence < settings.min_confidence:
+            low_confidence.append(r.genre_confidence)
+
+    lines += [
+        f"- 判断材料が不足（genre_determinable の確率が {settings.genre_determinable_threshold} 未満）: "
+        f"{len(undeterminable)} 曲",
+        f"- ジャンルの confidence が {settings.min_confidence} 未満: {len(low_confidence)} 曲",
+    ]
+    unexplained = len(unknown) - len(undeterminable) - len(low_confidence)
+    if unexplained:
+        lines.append(f"- 理由を特定できない: {unexplained} 曲")
+
+    if undeterminable:
+        lines += [
+            "",
+            "判断材料が不足した曲の genre_determinable の確率（notes に残っている小数 2 桁の値）:",
+            "",
+            *_histogram([p for p, _ in undeterminable], settings.genre_determinable_threshold),
+            "",
+            f"genre_determinable の閾値を下げた場合に判定済みになる曲（confidence が {settings.min_confidence} "
+            "以上の曲に限る）:",
+            "",
+        ]
+        for threshold in _RELAXED_DETERMINABLE_THRESHOLDS:
+            recovered = sum(
+                1 for p, c in undeterminable if p >= threshold and c is not None and c >= settings.min_confidence
+            )
+            lines.append(f"- {threshold}: {recovered} 曲（不明 {len(unknown)} 曲 → {len(unknown) - recovered} 曲）")
+
+    if low_confidence:
+        lines += [
+            "",
+            "confidence が不足した曲のジャンルの confidence:",
+            "",
+            *_histogram(low_confidence, settings.min_confidence),
+        ]
+
+    return lines
+
+
+def _histogram(values: list[float], upper: float) -> list[str]:
+    """0 から `upper` 未満の値を、幅 `_HISTOGRAM_STEP` の区間ごとに数えた表を返す。"""
+    # 0.1 * 3 のような誤差で 0.3 ちょうどの値が下の区間に入らないよう、小数 2 桁に丸める
+    edges = [round(i * _HISTOGRAM_STEP, 2) for i in range(round(upper / _HISTOGRAM_STEP))] + [upper]
+    lines = ["| 範囲 | 曲数 |", "|---|---:|"]
+    for low, high in pairwise(edges):
+        count = sum(1 for v in values if low <= v < high)
+        lines.append(f"| {low:.1f} 以上 {high:.1f} 未満 | {count} |")
+
     return lines
 
 

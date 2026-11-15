@@ -20,6 +20,7 @@ from volumio_playlist_studio.classify.jev import (
     build_questions,
     build_state,
     create_client,
+    recorded_genre_determinable,
 )
 from volumio_playlist_studio.classify.runner import ClassificationRunSummary, RunLimits, classify_tracks
 from volumio_playlist_studio.config import JEV_QUESTION_VERSION, JevSettings
@@ -209,6 +210,27 @@ def test_genre_is_unknown_when_information_is_insufficient(make_track: TrackFact
 
     assert result.genre is None
     assert "判断材料が不足" in result.notes[0]
+
+
+@pytest.mark.parametrize(
+    ("determinable", "genre_confidence", "expected"),
+    [
+        (0.2, 0.9, 0.2),
+        (0.456, 0.9, 0.46),  # notes には小数 2 桁で残る
+        (0.95, 0.9, None),  # 判断材料が足りた場合は残さない
+        (0.95, 0.3, None),  # confidence 不足で不明にした場合も残さない
+    ],
+)
+def test_recorded_genre_determinable_survives_saving(
+    make_track: TrackFactory, determinable: float, genre_confidence: float, expected: float | None
+) -> None:
+    body = jev_response(determinable=determinable, genre_confidence=genre_confidence)
+    with client_for(Recorder([ok(body)])) as client:
+        result = JevClassifier(client=client).classify(make_track(), None)
+
+    restored = type(result).from_dict(json.loads(json.dumps(result.to_dict())))
+
+    assert recorded_genre_determinable(restored) == expected
 
 
 def test_other_genre_is_kept_when_determinable(make_track: TrackFactory) -> None:
