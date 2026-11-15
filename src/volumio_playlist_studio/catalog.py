@@ -6,10 +6,11 @@ from dataclasses import dataclass
 
 from volumio_playlist_studio.albums import album_key, group_albums
 from volumio_playlist_studio.analyzer import is_analyzable
+from volumio_playlist_studio.classify.genre_tags import genre_from_tag
 from volumio_playlist_studio.classify.jev import ENGINE_NAME as JEV_ENGINE
 from volumio_playlist_studio.classify.rules import ENGINE_NAME as RULES_ENGINE
 from volumio_playlist_studio.config import ANALYSIS_VERSION, JEV_ALBUM_QUESTION_VERSION
-from volumio_playlist_studio.models import GENRE_LABELS, ClassificationResult, ClassificationSource
+from volumio_playlist_studio.models import GENRE_LABELS, ClassificationResult, ClassificationSource, Genre, Track
 from volumio_playlist_studio.playlist import Candidate
 from volumio_playlist_studio.storage import analysis as analysis_store
 from volumio_playlist_studio.storage import settings_store
@@ -19,6 +20,32 @@ from volumio_playlist_studio.storage.playlists import track_usage_counts
 from volumio_playlist_studio.storage.tracks import last_scan_at, list_tracks
 
 UNKNOWN_GENRE_LABEL = "不明"
+
+
+@dataclass(frozen=True)
+class GenreTagCount:
+    """ジャンルタグの表記 1 つと、それを持つ曲数。
+
+    Attributes:
+        tag: 前後の空白を除いた表記。タグが空の曲は空文字列。
+        genre: 現在の照合規則で当てはまるジャンル。当てはまらなければ None。
+    """
+
+    tag: str
+    genre: Genre | None
+    tracks: int
+
+
+def genre_tag_counts(tracks: list[Track]) -> list[GenreTagCount]:
+    """ジャンルタグの表記ごとに、当てはまるジャンルと曲数を、曲数の多い順に返す。
+
+    保存済みの分類結果ではなく現在の照合規則で求めるため、規則を変えた直後でも、スキャンし直す前に
+    どの表記が当てはまるようになったかを確かめられる。
+    """
+    counts = Counter((t.genre or "").strip() for t in tracks)
+    return [
+        GenreTagCount(tag, genre_from_tag(tag), n) for tag, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+    ]
 
 
 @dataclass(frozen=True)

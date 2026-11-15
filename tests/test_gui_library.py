@@ -8,12 +8,13 @@ from test_gui import click, run_view, wait_for_jobs
 
 from volumio_playlist_studio.albums import album_key, group_albums
 from volumio_playlist_studio.config import JEV_ALBUM_QUESTION_VERSION
+from volumio_playlist_studio.models import TitleSource, TrackMetadata
 from volumio_playlist_studio.sample_data import generate_sample_audio
 from volumio_playlist_studio.scanner import scan_library
 from volumio_playlist_studio.storage import settings_store
 from volumio_playlist_studio.storage.album_judgments import AlbumJudgmentRecord, save_album_judgment
 from volumio_playlist_studio.storage.database import transaction
-from volumio_playlist_studio.storage.tracks import list_tracks
+from volumio_playlist_studio.storage.tracks import list_tracks, upsert_track
 
 
 def test_library_view_with_demo_data(demo: sqlite3.Connection) -> None:
@@ -174,3 +175,38 @@ def test_classification_details_do_not_show_none(demo: sqlite3.Connection) -> No
     assert set(details["確信度"]) == {"対象外"}
     assert "判定保留" in details["スコア (0〜1)"].tolist()
     assert not details.isna().any().any()
+
+
+def test_genre_tags_lists_demo_tags_without_unmatched(demo: sqlite3.Connection) -> None:
+    at = run_view("library")
+
+    assert any(e.label == "ジャンルタグの表記（10 種類、当てはまらない表記 0 種類）" for e in at.expander)
+    tags = next(d.value for d in at.dataframe if "表記" in d.value.columns)
+    assert dict(zip(tags["表記"], tags["ジャンル"], strict=True))["（タグなし）"] == "不明"
+
+    next(c for c in at.checkbox if c.label == "当てはまらない表記だけを表示").check().run()
+
+    assert not at.exception
+    assert any("該当する表記はありません" in c.value for c in at.caption)
+
+
+def test_genre_tags_shows_unmatched_tags_on_screen(app_db: sqlite3.Connection) -> None:
+    def meta(rel_path: str, genre: str | None) -> TrackMetadata:
+        return TrackMetadata(
+            rel_path=rel_path, title="曲", artist="歌手", album="アルバム", genre=genre, year=None,
+            track_number=None, duration_sec=200.0, bitrate=None, sample_rate=None, channels=None, codec=None,
+            file_size=100, mtime_ns=1, title_source=TitleSource.TAG, tags_repaired=False, quick_hash=None,
+        )  # fmt: skip
+
+    with transaction(app_db):
+        settings_store.set_value(app_db, settings_store.MUSIC_ROOT_KEY, "/music")
+        for i, genre in enumerate(["架空の表記", "架空の表記", "Rock", None]):
+            upsert_track(app_db, "/music", meta(f"{i}.flac", genre), None)
+
+    at = run_view("library")
+    assert any(e.label == "ジャンルタグの表記（3 種類、当てはまらない表記 1 種類）" for e in at.expander)
+
+    next(c for c in at.checkbox if c.label == "当てはまらない表記だけを表示").check().run()
+
+    tags = next(d.value for d in at.dataframe if "表記" in d.value.columns)
+    assert tags.to_dict("records") == [{"表記": "架空の表記", "ジャンル": "不明", "曲数": 2}]
