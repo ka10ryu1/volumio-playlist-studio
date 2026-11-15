@@ -13,6 +13,7 @@ from dataclasses import dataclass
 from itertools import pairwise
 from pathlib import Path, PurePosixPath
 
+from volumio_playlist_studio.albums import album_key
 from volumio_playlist_studio.analyzer import is_analyzable
 from volumio_playlist_studio.catalog import UNKNOWN_GENRE_LABEL, dashboard_stats
 from volumio_playlist_studio.classify.genre_tags import genre_from_tag
@@ -349,6 +350,8 @@ def _unknown_genre_section(
         *_rules_unknown_breakdown(tracks, rules),
         "",
         *_jev_unknown_breakdown(jev, settings),
+        "",
+        *_fill_estimate(tracks, rules, jev),
     ]
 
 
@@ -368,6 +371,61 @@ def _rules_unknown_breakdown(tracks: list[Track], rules: dict[int, Classificatio
         lines.append(f"- タグは候補に当てはまる（分類した後にタグが変わった可能性）: {stale} 曲")
 
     return lines
+
+
+def _fill_estimate(
+    tracks: list[Track], rules: dict[int, ClassificationResult], jev: dict[int, ClassificationResult]
+) -> list[str]:
+    """ルールベースが不明の曲のうち、Jev の判定や同じアルバムの曲のジャンルで補える曲数を試算する。
+
+    補う方法を決めるための数字で、結果は変更しない。アルバムで補う場合は、アルバム内の判定済みの曲の
+    ジャンルが 1 種類か（コンピレーションなどで複数に分かれていないか）も数え、誤判定の起きやすさの目安にする。
+    """
+    unknown = [t for t in tracks if t.id in rules and rules[t.id].genre is None]
+    lines = [f"不明を補える曲の試算（ルールベースが不明の {len(unknown)} 曲のうち。結果は変更していない）:", ""]
+    if not unknown:
+        return [*lines, "- 不明の曲なし"]
+
+    jev_genres = {i: r.genre for i, r in jev.items() if r.genre is not None}
+    rule_genres = {i: r.genre for i, r in rules.items() if r.genre is not None}
+    # ルールベースを優先し、不明なら Jev の判定で補ったジャンル
+    combined_genres = {**jev_genres, **rule_genres}
+    by_jev = [t for t in unknown if t.id in jev_genres]
+    jev_unknown = sum(1 for t in unknown if t.id in jev and t.id not in jev_genres)
+    rest = [t for t in unknown if t.id not in jev_genres]
+    lines += [
+        f"- Jev がジャンルを判定済み: {len(by_jev)} 曲"
+        f"（Jev も不明: {jev_unknown} 曲、Jev で未判定: {len(unknown) - len(by_jev) - jev_unknown} 曲）",
+        *_album_fill_lines("同じアルバムに、ルールベースでジャンルが決まった曲がある", unknown, tracks, rule_genres),
+        *_album_fill_lines(
+            "Jev で補えない曲のうち、同じアルバムにルールベースか Jev でジャンルが決まった曲がある",
+            rest,
+            tracks,
+            combined_genres,
+        ),
+    ]
+    # ジャンルが複数に分かれるアルバムは、どれで補うか決まらないため含めない
+    filled = len(by_jev) + _album_fill_counts(rest, tracks, combined_genres)[1]
+    lines.append(
+        f"- Jev と、ジャンルが 1 種類のアルバムで補った場合: 不明 {len(unknown)} 曲 → {len(unknown) - filled} 曲"
+    )
+    return lines
+
+
+def _album_fill_lines(label: str, targets: list[Track], tracks: list[Track], known: dict[int, Genre]) -> list[str]:
+    fillable, single = _album_fill_counts(targets, tracks, known)
+    return [f"- {label}: {fillable} 曲（うちアルバム内のジャンルが 1 種類: {single} 曲）"]
+
+
+def _album_fill_counts(targets: list[Track], tracks: list[Track], known: dict[int, Genre]) -> tuple[int, int]:
+    """同じアルバムにジャンルが決まった曲がある曲数と、そのうちアルバム内のジャンルが 1 種類の曲数。"""
+    album_genres: dict[str, set[Genre]] = {}
+    for track in tracks:
+        if track.id in known:
+            album_genres.setdefault(album_key(track), set()).add(known[track.id])
+
+    genres = [album_genres.get(album_key(t), set()) for t in targets]
+    return sum(1 for g in genres if g), sum(1 for g in genres if len(g) == 1)
 
 
 def _jev_unknown_breakdown(jev: dict[int, ClassificationResult], settings: JevSettings) -> list[str]:

@@ -248,11 +248,70 @@ def test_unknown_genre_breakdown_uses_saved_jev_settings(
     assert "- 0.3: 2 曲（不明 4 曲 → 2 曲）" in report
 
 
+@pytest.fixture
+def fillable_unknowns(db: sqlite3.Connection, make_classification: ClassificationFactory) -> sqlite3.Connection:
+    """ルールベースが不明の曲を、Jev やアルバムで補える曲数を手で数えられる架空のライブラリ。
+
+    (フォルダ, アルバムタグ, ルールベース, Jev)。ルールベースの "-" は未判定、Jev の "-" は未判定、None は不明。
+    """
+    rows: list[tuple[str, str, Genre | str | None, Genre | str | None]] = [
+        ("A", "秘密のアルバム", None, Genre.JAZZ),
+        ("A", "秘密のアルバム", Genre.ROCK, "-"),
+        ("A", "秘密のアルバム", None, None),
+        ("B", "秘密のアルバム", None, "-"),
+        ("B", "秘密のアルバム", None, Genre.POP),
+        # ジャンルが複数に分かれるアルバム（コンピレーションなど）
+        ("C", "秘密のアルバム", Genre.ROCK, "-"),
+        ("C", "秘密のアルバム", Genre.POP, "-"),
+        ("C", "秘密のアルバム", None, None),
+        # フォルダが同じでもアルバムタグが違えば別のアルバム
+        ("A", "秘密の別のアルバム", None, "-"),
+        # ルールベースで未判定の曲は数えない
+        ("E", "秘密のアルバム", "-", Genre.JAZZ),
+    ]
+    with transaction(db):
+        for i, (folder, album, rule_genre, jev_genre) in enumerate(rows):
+            meta = replace(_meta(f"秘密の歌手/{folder}/{i:02}.flac"), album=album)
+            track_id = upsert_track(db, ROOT, meta, None)
+            if rule_genre is None or isinstance(rule_genre, Genre):
+                rule_result = replace(make_classification(rule_genre), engine_version=RULE_VERSION)
+                save_classification(db, track_id, rule_result)
+
+            if jev_genre is None or isinstance(jev_genre, Genre):
+                jev_result = make_classification(jev_genre, engine="jev")
+                save_classification(db, track_id, replace(jev_result, engine_version=JEV_QUESTION_VERSION))
+
+    return db
+
+
+def test_report_estimates_unknown_genres_fillable_by_jev_and_albums(fillable_unknowns: sqlite3.Connection) -> None:
+    report = _report(fillable_unknowns, host=None)
+    section = report[report.index("不明を補える曲の試算") :]
+
+    assert section.startswith("不明を補える曲の試算（ルールベースが不明の 6 曲のうち。結果は変更していない）:")
+    assert "- Jev がジャンルを判定済み: 2 曲（Jev も不明: 2 曲、Jev で未判定: 2 曲）" in section
+    # A の 2 曲（ロックのみ）と C の 1 曲（ロックとポップ）。B は判定済みの曲がルールベースにない
+    assert (
+        "- 同じアルバムに、ルールベースでジャンルが決まった曲がある: 3 曲（うちアルバム内のジャンルが 1 種類: 2 曲）"
+        in section
+    )
+    # Jev で補えない A・B・C・別のアルバムの 4 曲のうち、A（ジャズとロック）・B（ポップ）・C（ロックとポップ）の 3 曲
+    assert (
+        "- Jev で補えない曲のうち、同じアルバムにルールベースか Jev でジャンルが決まった曲がある: 3 曲"
+        "（うちアルバム内のジャンルが 1 種類: 1 曲）"
+    ) in section
+    # Jev の 2 曲と、ジャンルが 1 種類の B の 1 曲
+    assert "- Jev と、ジャンルが 1 種類のアルバムで補った場合: 不明 6 曲 → 3 曲" in section
+    for secret in SECRETS:
+        assert secret not in report
+
+
 def test_unknown_genre_breakdown_omits_empty_details(library: sqlite3.Connection) -> None:
     report = _report(library)
 
     assert "ルールベース（判定済み 2 曲のうち不明 0 曲）:" in report
     assert "分類した後にタグが変わった可能性" not in report
+    assert "不明を補える曲の試算（ルールベースが不明の 0 曲のうち。結果は変更していない）:\n\n- 不明の曲なし" in report
     # 不明の 1 曲は notes も confidence もないため、原因を特定できない
     assert "- 理由を特定できない: 1 曲" in report
     assert "閾値を下げた場合" not in report
