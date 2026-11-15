@@ -302,19 +302,25 @@ def test_candidates_use_album_judgment_and_threshold(db: sqlite3.Connection) -> 
     tracks = {t.id: t for t in list_tracks(db, ROOT)}
     with transaction(db):
         version = JEV_ALBUM_QUESTION_VERSION
-        save_album_judgment(db, AlbumJudgmentRecord(ROOT, album_key(tracks[kids]), version, 0.6, None))
-        save_album_judgment(db, AlbumJudgmentRecord(ROOT, album_key(tracks[plain]), version, 0.4, None))
+        save_album_judgment(db, AlbumJudgmentRecord(ROOT, album_key(tracks[kids]), version, 0.9, None))
+        save_album_judgment(db, AlbumJudgmentRecord(ROOT, album_key(tracks[plain]), version, 0.85, None))
 
     def flags() -> dict[int, bool | None]:
         return {c.track.id: c.for_children for c in load_candidates(db, ROOT, ClassificationSource.RULES)}
 
+    # 既定の閾値は 0.9 で、ちょうど 0.9 は子供向け、それ未満は子供向けではない
     assert flags() == {kids: True, plain: False, unjudged: None}
 
     # 閾値を変えても再判定せずに反映される
     with transaction(db):
-        settings_store.set_jev_settings(db, JevSettings(children_threshold=0.7))
+        settings_store.set_jev_settings(db, JevSettings(children_threshold=0.8))
 
-    assert flags()[kids] is False
+    assert flags() == {kids: True, plain: True, unjudged: None}
+
+    with transaction(db):
+        settings_store.set_jev_settings(db, JevSettings(children_threshold=0.95))
+
+    assert flags() == {kids: False, plain: False, unjudged: None}
 
 
 def test_judged_albums_lists_most_likely_first(db: sqlite3.Connection) -> None:
