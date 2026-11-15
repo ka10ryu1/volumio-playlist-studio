@@ -52,9 +52,13 @@ def main() -> None:
 
         navigation = st.navigation(pages)
         st.sidebar.link_button("問い合わせ（GitHub）", ISSUES_URL, icon=":material/help:", width="stretch")
-        show_job_message()
-        show_jobs()
-        navigation.run()
+        with st.container(key="job-notifications"):
+            show_job_message()
+            show_jobs()
+
+        # 通知の出現・消失で本文の要素の位置（識別子）がずれないようにする。
+        with st.container(key="page-content"):
+            navigation.run()
     finally:
         ctx.conn.close()
 

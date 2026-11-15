@@ -15,6 +15,13 @@ primaryColor = "#c7354f"
 backgroundColor = "#ffffff"
 secondaryBackgroundColor = "#f7f7f8"
 textColor = "#262730"
+# 入力欄の境界と表の見出しを明確にし、赤は主要操作と選択状態に使う。
+borderColor = "#858b97"
+dataframeBorderColor = "#d5d9e0"
+dataframeHeaderBackgroundColor = "#edf0f4"
+dataframeHeaderTextColor = "#262730"
+showWidgetBorder = true
 font = "sans-serif"
 headingFontSizes = ["1.75rem", "1.4rem", "1.2rem", "1.1rem", "1rem", "1rem"]
 baseRadius = "0.5rem"
+paddingTop = "1.5rem"

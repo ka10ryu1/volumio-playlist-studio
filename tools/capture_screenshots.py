@@ -20,7 +20,7 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
-from playwright.sync_api import Browser, Page, ViewportSize, sync_playwright
+from playwright.sync_api import Browser, Page, ViewportSize, expect, sync_playwright
 
 from volumio_playlist_studio.classify.rules import ENGINE_NAME as RULES_ENGINE
 from volumio_playlist_studio.config import (
@@ -188,6 +188,7 @@ def save_full_page(page: Page, path: Path) -> None:
     height = page.evaluate("document.querySelector(\"[data-testid='stMain']\").scrollHeight")
     page.set_viewport_size({"width": viewport["width"], "height": max(int(height), viewport["height"])})
     wait_for_app(page)
+    page.get_by_test_id("stMain").evaluate("element => element.scrollTo(0, 0)")
     page.screenshot(path=path)
     page.set_viewport_size(viewport)
     logger.info("screenshot saved: file=%s", path.name)
@@ -195,6 +196,7 @@ def save_full_page(page: Page, path: Path) -> None:
 
 def save_viewport(page: Page, path: Path) -> None:
     """見えている範囲だけを撮る。"""
+    page.get_by_test_id("stMain").evaluate("element => element.scrollTo(0, 0)")
     check_layout(page)
     page.screenshot(path=path)
     logger.info("screenshot saved: file=%s", path.name)
@@ -210,6 +212,10 @@ def fill_seed(page: Page) -> None:
     """選曲の seed を固定する。初期値は画面を開いた時刻で変わるため、撮り直しても同じ画像になるようにする。"""
     page.get_by_text("詳細設定", exact=True).click()
     page.get_by_label("seed（同じ値なら同じ結果を再現します）").fill(str(PLAYLIST_SEED))
+    page.get_by_label("seed（同じ値なら同じ結果を再現します）").press("Enter")
+    wait_for_app(page)
+    expect(page.get_by_label("seed（同じ値なら同じ結果を再現します）")).to_be_visible()
+    expect(page.get_by_label("seed（同じ値なら同じ結果を再現します）")).to_have_value(str(PLAYLIST_SEED))
     page.get_by_text("詳細設定", exact=True).click()
 
 
@@ -218,11 +224,46 @@ def create_playlist(page: Page) -> None:
     fill_seed(page)
     page.get_by_role("button", name="プレイリストを生成").click()
     wait_for_app(page)
+    expect(page.get_by_label("雰囲気", exact=True)).not_to_be_visible()
     page.get_by_role("tab", name="3. 保存・連携").click()
     page.get_by_label("プレイリスト名", exact=True).fill(PLAYLIST_NAME)
     page.get_by_label("プレイリスト名", exact=True).press("Enter")
     wait_for_app(page)
+    expect(page.get_by_role("tab", name="3. 保存・連携")).to_have_attribute("aria-selected", "true")
+    expect(page.get_by_label("プレイリスト名", exact=True)).to_have_value(PLAYLIST_NAME)
+    # 入力を確定しただけでは保存しない。ボタンを一度押すと保存できることも確認する。
+    expect(page.get_by_text("登録するプレイリスト", exact=True)).not_to_be_visible()
+    # 空欄を確定した後に名前を入力し、入力欄からボタンへ直接一度タップしても保存できる。
+    page.get_by_label("プレイリスト名", exact=True).fill("")
+    page.get_by_label("プレイリスト名", exact=True).press("Enter")
+    wait_for_app(page)
+    page.get_by_label("プレイリスト名", exact=True).fill(PLAYLIST_NAME)
     page.get_by_role("button", name="プレイリストを保存").click()
+    wait_for_app(page)
+    expect(page.get_by_role("tab", name="3. 保存・連携")).to_have_attribute("aria-selected", "true")
+    expect(page.get_by_text(f"「{PLAYLIST_NAME}」を保存しました。", exact=False)).to_be_visible()
+
+
+def check_playlist_keyboard(page: Page) -> None:
+    """入力確定・フォーカス移動・画面の高さの変化で、編集中のタブと名前を失わないことを確認する。"""
+    name = page.get_by_label("プレイリスト名", exact=True)
+    name.fill("キーボード操作の確認")
+    name.press("Tab")
+    wait_for_app(page)
+    expect(page.get_by_role("tab", name="3. 保存・連携")).to_have_attribute("aria-selected", "true")
+    expect(name).to_have_value("キーボード操作の確認")
+    viewport = page.viewport_size
+    if viewport is None:
+        raise RuntimeError("viewport size is not set")
+
+    # ソフトキーボードそのものは再現できないため、表示領域が縮んで戻るケースを検証する。
+    page.set_viewport_size({"width": viewport["width"], "height": viewport["height"] // 2})
+    name.focus()
+    page.set_viewport_size(viewport)
+    expect(page.get_by_role("tab", name="3. 保存・連携")).to_have_attribute("aria-selected", "true")
+    expect(name).to_have_value("キーボード操作の確認")
+    name.fill(PLAYLIST_NAME)
+    name.press("Enter")
     wait_for_app(page)
 
 
@@ -273,6 +314,7 @@ def capture_pages(page: Page, base_url: str, output_dir: Path, suffix: str) -> N
         raise RuntimeError("generate button is outside the initial viewport")
 
     create_playlist(page)
+    check_playlist_keyboard(page)
     save_full_page(page, output_dir / f"playlist-save{suffix}.png")
     page.get_by_role("tab", name="2. 曲を編集").click()
     save_full_page(page, output_dir / ("playlist.png" if not suffix else f"playlist-edit{suffix}.png"))
@@ -289,6 +331,22 @@ def capture_pages(page: Page, base_url: str, output_dir: Path, suffix: str) -> N
         page.get_by_text("Jev API の設定", exact=True).click()
         page.get_by_text("高度な音響解析設定", exact=True).click()
         save_full_page(page, output_dir / "settings-advanced.png")
+        check_settings_keyboard(page)
+
+
+def check_settings_keyboard(page: Page) -> None:
+    """Enter では設定を保存せず、保存ボタンを押した後も同じタブにいることを確認する。"""
+    model = page.get_by_label("モデル", exact=True)
+    model.fill("keyboard-test-model")
+    model.press("Enter")
+    wait_for_app(page)
+    saved = page.get_by_text("保存しました。判定基準の変更は、次に Jev で判定した曲から反映されます。")
+    expect(saved).not_to_be_visible()
+    form = page.get_by_test_id("stForm").filter(has=model)
+    form.get_by_role("button", name="保存", exact=True).click()
+    wait_for_app(page)
+    expect(page.get_by_role("tab", name="解析・AI")).to_have_attribute("aria-selected", "true")
+    expect(saved).to_be_visible()
 
 
 def check_navigation_state(page: Page) -> None:

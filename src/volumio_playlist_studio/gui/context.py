@@ -107,7 +107,7 @@ def start_job(name: str, database_path: Path, work: Callable[[sqlite3.Connection
 
 @st.fragment(run_every=1.0)
 def job_status_panel() -> None:
-    """バックグラウンド処理の進捗を 1 秒ごとに更新して表示する。終了したら画面全体を更新する。"""
+    """進捗と完了をこの領域だけで更新し、入力中の画面を再実行しない。"""
     for name, job in list(jobs().items()):
         if job.state == JobState.RUNNING:
             st.progress(job.fraction, text=f"{name} を実行中… {job.done}/{job.total or '?'}")
@@ -116,20 +116,31 @@ def job_status_panel() -> None:
 
             continue
 
-        del jobs()[name]
         if job.state == JobState.FAILED:
-            st.session_state["job_message"] = ("error", f"{name}: {job.error}")
+            message = ("error", f"{name}: {job.error}")
         else:
             summary = job.result if isinstance(job.result, str) else ""
-            st.session_state["job_message"] = ("success", f"{name} が完了しました。{summary}")
+            message = ("success", f"{name} が完了しました。{summary}")
 
-        st.rerun()
+        if message[0] == "error":
+            st.error(message[1])
+        else:
+            st.success(message[1])
+
+        if st.button(
+            "結果を画面に反映", key=f"apply-{name}", help="入力を終えてから押してください。最新の結果を表示します。"
+        ):
+            del jobs()[name]
+            st.session_state["job_message"] = message
+            st.rerun()
 
 
 def show_jobs() -> None:
     """バックグラウンド処理があれば進捗を表示する。"""
     if jobs():
-        job_status_panel()
+        # 完了通知に切り替わっても本文を押し下げないよう、高さを確保する。
+        with st.container(height=180):
+            job_status_panel()
 
 
 def show_job_message() -> None:

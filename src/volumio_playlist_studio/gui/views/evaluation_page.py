@@ -52,7 +52,7 @@ def render(ctx: PageContext) -> None:
 
     tracks = {t.id: t for t in list_tracks(ctx.conn, ctx.library_root)}
     labels = {k: v for k, v in load_labels(ctx.conn).items() if k in tracks}
-    labeling, metrics, feedback = st.tabs(["評価入力", "集計・CSV", "プレイリスト"])
+    labeling, metrics, feedback = st.tabs(["評価入力", "集計・CSV", "プレイリスト"], key="evaluation-tabs")
     with labeling:
         _sample_section(ctx, list(tracks.values()), labels)
         if labels:
@@ -73,10 +73,16 @@ def _sample_section(ctx: PageContext, tracks: list[Track], labels: dict[int, Eva
     defaults = EvaluationDefaults()
     evaluated = sum(1 for lb in labels.values() if lb.is_evaluated)
     st.write(f"評価対象: {len(labels)} 曲（評価済み {evaluated} 曲・未評価 {len(labels) - evaluated} 曲）")
-    st.caption(
-        "評価対象は「調整用」と「検証用」に半分ずつ分けます。ルールを調整するときは調整用だけを参照し、"
-        "改善の確認は検証用の指標で行ってください（評価データへの過学習を防ぐため）。"
-    )
+    with st.popover("評価の進め方", icon=":material/info:"):
+        st.write(
+            "曲を選び、判定が正しいかを入力して「評価を保存」を押してください。"
+            "「未評価の曲だけ表示」がオンの場合、保存した曲は一覧から外れ、次の曲を表示します。"
+        )
+        st.write(
+            "評価対象は「調整用」と「検証用」に半分ずつ分けます。ルールの調整には調整用を使い、"
+            "改善の確認には検証用を使います。"
+        )
+
     with st.expander("評価対象を追加する", expanded=not labels):
         size = st.slider(
             "追加する曲数",
@@ -139,7 +145,7 @@ def _label_form(ctx: PageContext, label: EvaluationLabel, stored: StoredClassifi
     moods: list[Mood] = list(_MOODS)
     genres = list(Genre)
     verdicts = list(Verdict)
-    with st.form(f"label-{label.track_id}"):
+    with st.form(f"label-{label.track_id}", enter_to_submit=False):
         st.markdown(f"判定ジャンル: **{genre_label(predicted_genre)}**")
         genre_verdict = st.radio(
             "ジャンルの判定は",

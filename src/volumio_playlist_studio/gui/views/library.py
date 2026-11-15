@@ -115,6 +115,13 @@ def _track_table(ctx: PageContext, tracks: list[Track]) -> None:
     pending = {t.id for t in analysis_store.tracks_needing_analysis(ctx.conn, library_root, ANALYSIS_VERSION)}
     failed = analysis_store.failed_track_ids(ctx.conn, library_root, ANALYSIS_VERSION)
     with st.expander("絞り込み・表示項目"):
+        with st.popover("解析状況・ジャンルの見方", icon=":material/info:"):
+            st.write(
+                "スキャンは曲の情報を登録し、解析は音声からテンポなどを調べます。"
+                "「判定ジャンル」は解析・AI の結果で、ファイルのジャンルタグとは異なる場合があります。"
+                "検索と絞り込みは一覧の表示だけを変えます。"
+            )
+
         # 選択欄は一覧から選ぶだけなので文字入力を受け付けず、スマートフォンでキーボードを出さない。
         # 曲名などでの絞り込みは上の検索欄で行う
         state = st.selectbox("解析状況", ["すべて", "解析済み", "未解析", "解析失敗", "未対応形式"], filter_mode=None)
@@ -160,9 +167,17 @@ def _track_table(ctx: PageContext, tracks: list[Track]) -> None:
         st.info("条件に合う曲がありません。検索語や絞り込みを変更してください。")
         return
 
-    selected = st.selectbox("詳細を表示する曲", shown, format_func=track_label, filter_mode=None)
-    if selected is not None:
-        _track_detail(ctx, selected)
+    # 解析で曲の情報が更新されても、同じ ID の曲を選び続ける。
+    tracks_by_id = {track.id: track for track in shown}
+    selected_id = st.selectbox(
+        "詳細を表示する曲",
+        list(tracks_by_id),
+        format_func=lambda track_id: track_label(tracks_by_id[track_id]),
+        key="library-track",
+        filter_mode=None,
+    )
+    if selected_id is not None:
+        _track_detail(ctx, tracks_by_id[selected_id])
 
 
 def _analysis_state(track: Track, pending: set[int], failed: set[int]) -> str:
