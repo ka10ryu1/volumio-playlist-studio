@@ -34,6 +34,23 @@ def page_title(title: str) -> None:
         st.button("更新", icon=":material/refresh:", type="tertiary", help="画面を最新の状態に描き直します")
 
 
+def reset_selection_if_changed(table_key: str, ids_key: str, ids: list[int]) -> None:
+    """表の行の並びが前回の表示から変わっていたら、表の行選択を解除する。表を描く前に呼ぶ。
+
+    行選択は行番号で保持されるため、別のタブでの削除や追加で並びが変わると、
+    利用者が選んでいない行が選ばれた状態になる。それを防ぐ。
+
+    Args:
+        table_key: 表（st.dataframe）のキー。
+        ids_key: 前回表示した行の ID の並びを保持するキー。
+        ids: 今回表示する行の ID の並び。
+    """
+    if st.session_state.get(ids_key) != ids:
+        st.session_state.pop(table_key, None)
+
+    st.session_state[ids_key] = ids
+
+
 def format_duration(seconds: float | None) -> str:
     """秒を「分:秒」の文字列にする。不明なら「-」。"""
     if seconds is None:

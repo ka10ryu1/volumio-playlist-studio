@@ -1,4 +1,4 @@
-"""プレイリスト作成画面のうち、雰囲気で選ぶ生成・下書きの編集・保存・削除のテスト。"""
+"""プレイリスト作成画面のうち、雰囲気で選ぶ生成・下書きの編集・保存のテスト。"""
 
 import sqlite3
 
@@ -9,8 +9,7 @@ from volumio_playlist_studio.models import (
     Mood,
 )
 from volumio_playlist_studio.playlist import ChildrenMode, GenreMode
-from volumio_playlist_studio.storage.database import transaction
-from volumio_playlist_studio.storage.playlists import list_playlists, list_registrations, set_feedback
+from volumio_playlist_studio.storage.playlists import list_playlists
 
 
 def test_playlist_excludes_children_by_default_and_can_select_only_children(demo: sqlite3.Connection) -> None:
@@ -25,7 +24,7 @@ def test_playlist_excludes_children_by_default_and_can_select_only_children(demo
     assert any("子供向けの条件に合わない" in w.value and "Jev で判定" in w.value for w in at.warning)
 
 
-def test_playlist_generation_edit_save_and_register(demo: sqlite3.Connection) -> None:
+def test_playlist_generation_edit_and_save(demo: sqlite3.Connection) -> None:
     at = run_view("playlist_page")
     at.selectbox(key="pl_mood").set_value(Mood.FOCUS)
     click(at, "プレイリストを生成")
@@ -47,17 +46,9 @@ def test_playlist_generation_edit_save_and_register(demo: sqlite3.Connection) ->
     [saved] = list_playlists(demo)
     assert saved.name == "テスト用プレイリスト"
     assert any(e.added_manually for e in saved.entries)
-
-    next(c for c in at.checkbox if c.label.startswith("この内容で")).check().run()
-    click(at, "Volumio に登録")
-    assert any("曲を登録しました" in s.value for s in at.success)
-    assert list_registrations(demo, saved.id)[0].status == "success"
-
-    # 同じ名前ではモックの Volumio に登録できない（既存のプレイリストを上書きしない）
-    at.run()
-    assert any("同じ名前のプレイリストが既にあります" in w.value for w in at.warning)
-    click(at, "Volumio に登録")
-    assert any("登録しませんでした" in e.value for e in at.error)
+    # Volumio への登録・削除はプレイリスト管理画面で行う
+    assert any("プレイリスト管理画面から Volumio に登録できます" in s.value for s in at.success)
+    assert not any(b.label in ("Volumio に登録", "選んだプレイリストを削除") for b in at.button)
 
 
 def test_playlist_shortfall_offers_relaxation(demo: sqlite3.Connection) -> None:
@@ -94,34 +85,6 @@ def test_playlist_requires_genres_when_filtering(demo: sqlite3.Connection) -> No
     click(at, "プレイリストを生成")
 
     assert any("ジャンルを 1 つ以上" in e.value for e in at.error)
-
-
-def test_saved_playlist_can_be_deleted_keeping_feedback(demo: sqlite3.Connection) -> None:
-    at = run_view("playlist_page")
-    click(at, "プレイリストを生成")
-    at.text_input(key="pl_name").input("消すプレイリスト").run()
-    click(at, "プレイリストを保存")
-    [saved] = list_playlists(demo)
-    with transaction(demo):
-        set_feedback(demo, saved.id, 2, {0})
-
-    # 生成前の画面（再表示）からも削除できる。確認のチェックを入れるまでは押せない
-    at = run_view("playlist_page")
-    assert next(b for b in at.button if b.label == "プレイリストを削除").disabled
-    next(c for c in at.checkbox if c.label == "このプレイリストを削除します").check().run()
-    click(at, "プレイリストを削除")
-
-    assert any("「消すプレイリスト」を削除しました" in s.value for s in at.success)
-    assert not any(b.label == "プレイリストを削除" for b in at.button)
-    assert list_playlists(demo) == []
-    [deleted] = list_playlists(demo, include_deleted=True)
-    assert (deleted.satisfaction, deleted.entries[0].unsuitable) == (2, True)
-
-    at = run_view("evaluation_page")
-    assert any("保存したプレイリストがありません" in c.value for c in at.caption)
-    table = next(d.value for d in at.dataframe if "平均満足度" in d.value.columns)
-    assert table.iloc[0]["プレイリスト数"] == 1
-    assert table.iloc[0]["平均満足度"] == "2.0"
 
 
 def test_playlist_conditions_survive_editing_and_save(demo: sqlite3.Connection) -> None:

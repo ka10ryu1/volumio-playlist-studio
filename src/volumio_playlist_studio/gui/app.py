@@ -8,7 +8,14 @@ import streamlit as st
 from volumio_playlist_studio.config import ISSUES_URL
 from volumio_playlist_studio.gui.context import open_context, show_job_message, show_jobs
 from volumio_playlist_studio.gui.lan import render_lan_page, require_pin, resolve_lan
-from volumio_playlist_studio.gui.views import dashboard, evaluation_page, library, playlist_page, settings_page
+from volumio_playlist_studio.gui.views import (
+    dashboard,
+    evaluation_page,
+    library,
+    manage_page,
+    playlist_page,
+    settings_page,
+)
 
 
 def main() -> None:
@@ -42,7 +49,13 @@ def main() -> None:
                 default=True,
             ),
             st.Page(lambda: library.render(ctx), title="音楽ライブラリ", icon="🎼", url_path="library"),
-            st.Page(lambda: playlist_page.render(ctx), title="プレイリスト作成", icon="🎧", url_path="playlist"),
+            st.Page(
+                lambda: playlist_page.render(ctx, on_manage=lambda: st.switch_page(pages[3])),
+                title="プレイリスト作成",
+                icon="🎧",
+                url_path="playlist",
+            ),
+            st.Page(lambda: manage_page.render(ctx), title="プレイリスト管理", icon="🗂️", url_path="manage"),
             st.Page(lambda: evaluation_page.render(ctx), title="精度評価", icon="✅", url_path="evaluation"),
             st.Page(lambda: settings_page.render(ctx), title="設定", icon="⚙️", url_path="settings"),
         ]

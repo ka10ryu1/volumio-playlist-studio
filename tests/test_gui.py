@@ -60,6 +60,15 @@ def navigate(at: AppTest, url_path: str) -> None:
     assert not at.exception, [e.value for e in at.exception]
 
 
+def select_rows(at: AppTest, key: str, rows: list[int]) -> AppTest:
+    """表（st.dataframe）の行を、画面で左端を選んだ場合と同じように選ぶ。"""
+    # AppTest は表の行選択を操作できないため、選択状態をセッション状態に書き込んで再実行する
+    at.session_state[key] = {"selection": {"rows": rows, "columns": []}}
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    return at
+
+
 def submit(at: AppTest, form_id: str) -> None:
     """フォームの送信ボタンを押す。同じ「保存」ボタンが複数あるため、フォームの ID で区別する。"""
     next(b for b in at.button if b.form_id == form_id).click().run()
@@ -113,7 +122,9 @@ def test_refresh_button_shows_latest_data(app_db: sqlite3.Connection) -> None:
     assert metrics["登録楽曲数"] == "60"
 
 
-@pytest.mark.parametrize("view", ["dashboard", "library", "playlist_page", "evaluation_page", "settings_page"])
+@pytest.mark.parametrize(
+    "view", ["dashboard", "library", "playlist_page", "manage_page", "evaluation_page", "settings_page"]
+)
 def test_every_view_has_refresh_button(demo: sqlite3.Connection, view: str) -> None:
     at = run_view(view)
 
@@ -138,7 +149,7 @@ def test_dashboard_navigates_to_playlist(demo: sqlite3.Connection) -> None:
     assert [t.value for t in at.title] == ["プレイリスト作成"]
     click(at, "プレイリストを生成")
     assert not next(e for e in at.expander if e.label == "1. 選曲の条件").proto.expanded
-    assert [t.label for t in at.tabs] == ["2. 曲を編集", "3. 保存・連携"]
+    assert [t.label for t in at.tabs] == ["2. 曲を編集", "3. 保存"]
     assert len(at.dataframe[0].value) > 0
 
 
@@ -165,12 +176,11 @@ def test_select_widgets_do_not_accept_typing_except_track_search(demo: sqlite3.C
     typable = [w.label for w in widgets if w.proto.filter_mode != SelectWidgetFilterMode.FILTER_MODE_NONE]
 
     assert typable == ["追加する曲"]
-    assert [w.label for w in widgets].count("プレイリスト") == 2
+    assert [w.label for w in widgets].count("プレイリスト") == 1
     assert {w.label for w in widgets} >= {
         "ジャンルを選ぶ（全ジャンル以外の場合）",
         "編集する曲",
         "プレイリスト",
-        "登録するプレイリスト",
         "解析状況",
         "判定ジャンルで絞り込み",
         "詳細を表示する曲",
@@ -202,3 +212,18 @@ def test_playlist_round_trip_keeps_unsaved_inputs_and_draft(demo: sqlite3.Connec
     assert at.number_input(key="pl_count").value == 7
     assert at.number_input(key="pl_seed").value == 2024
     assert at.dataframe[0].value["曲名"].tolist() == before
+
+
+def test_playlist_page_opens_manage_page_after_saving(demo: sqlite3.Connection) -> None:
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT).run()
+    navigate(at, "playlist")
+    click(at, "プレイリストを生成")
+    at.text_input(key="pl_name").input("管理画面で見る").run()
+    click(at, "プレイリストを保存")
+    assert any("プレイリスト管理画面から Volumio に登録できます" in s.value for s in at.success)
+
+    click(at, "プレイリスト管理を開く")
+
+    assert [t.value for t in at.title] == ["プレイリスト管理"]
+    assert [t.label for t in at.tabs] == ["プレイリスト", "雰囲気"]
+    assert at.dataframe[0].value["名前"].tolist() == ["管理画面で見る"]

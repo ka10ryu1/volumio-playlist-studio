@@ -6,7 +6,8 @@ import sqlite3
 from collections.abc import Iterator
 
 import pytest
-from test_gui import click, run_view, show_job_result, submit
+from test_gui import click, run_view, select_rows, show_job_result, submit
+from test_gui_manage import save_demo_playlist
 from test_volumio_rest import FakeVolumio
 from test_volumio_socketio import FakeSocketIO
 
@@ -48,9 +49,8 @@ def test_volumio_panel_previews_against_real_library(demo: sqlite3.Connection, f
     with transaction(demo):
         settings_store.set_value(demo, settings_store.VOLUMIO_HOST_KEY, fake_volumio.host)
 
-    at = run_view("playlist_page")
-    click(at, "プレイリストを生成")
-    click(at, "プレイリストを保存")
+    save_demo_playlist(demo, "照合するプレイリスト")
+    at = select_rows(run_view("manage_page"), "manage_playlists", [0])
     assert next(r for r in at.radio if r.label == "照合先").value == "Volumio 実機"
     assert any("まだ曲の一覧を取得していません" in c.value for c in at.caption)
     # 曲の一覧を取得して照合するまで、登録ボタンは表示しない
@@ -84,11 +84,9 @@ def test_volumio_panel_registers_to_real_device(demo: sqlite3.Connection) -> Non
         settings_store.set_value(demo, settings_store.VOLUMIO_HOST_KEY, fake.host)
         replace_uris(demo, fake.host, sorted(uri_by_id.values()))
 
-    at = run_view("playlist_page")
-    click(at, "プレイリストを生成")
-    at.text_input(key="pl_name").input("夜の曲").run()
-    click(at, "プレイリストを保存")
+    save_demo_playlist(demo, "夜の曲")
     [saved] = list_playlists(demo)
+    at = select_rows(run_view("manage_page"), "manage_playlists", [0])
     assert not any("一意に対応しない" in w.value for w in at.warning)
     register = next(b for b in at.button if b.label == "Volumio に登録")
     assert register.disabled  # 確認のチェックを入れるまで登録できない
