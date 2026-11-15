@@ -1,8 +1,12 @@
 """起動処理（launcher）と Windows 用ランチャーのテスト。"""
 
+import builtins
+import io
 import socket
 import subprocess
+import sys
 import threading
+import time
 from collections.abc import Iterator
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
@@ -112,6 +116,7 @@ class FakeProcess:
         self.cwd = cwd
         self.results = results
         self.terminated = False
+        self.killed = False
         self.wait_timeouts: list[float | None] = []
 
     def wait(self, timeout: float | None = None) -> int:
@@ -124,6 +129,9 @@ class FakeProcess:
 
     def terminate(self) -> None:
         self.terminated = True
+
+    def kill(self) -> None:
+        self.killed = True
 
 
 def test_main_starts_streamlit_in_project_root(
@@ -170,6 +178,147 @@ def test_streamlit_is_terminated_if_it_does_not_stop(second: BaseException) -> N
     assert process.terminated
 
 
+# --- 再起動 ----------------------------------------------------------------------------
+
+
+def _stop_request(tmp_path: Path, port: int) -> Path:
+    # conftest の VPS_DATA_DIR に合わせる
+    return tmp_path / "app-data" / f"stop-request-{port}"
+
+
+def _record_popen(monkeypatch: pytest.MonkeyPatch, results: list[int | BaseException]) -> list[FakeProcess]:
+    processes: list[FakeProcess] = []
+
+    # Streamlit のプロセスは起動せず、渡されたコマンドだけを記録する（外部プロセスの境界）
+    def fake_popen(command: list[str], cwd: Path) -> FakeProcess:
+        processes.append(FakeProcess(command, cwd, list(results)))
+        return processes[-1]
+
+    monkeypatch.setattr(subprocess, "Popen", fake_popen)
+    return processes
+
+
+def test_restart_stops_running_app_and_starts_again(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    server, port = _serve(b"ok")
+    request = _stop_request(tmp_path, port)
+    monkeypatch.setenv("VPS_PORT", str(port))
+    processes = _record_popen(monkeypatch, [0])
+
+    # 起動中の launcher の代わりに、停止の依頼を見つけたら依頼を消してサーバーを止める
+    def running_app() -> None:
+        deadline = time.monotonic() + 10
+        while not request.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+
+        request.unlink()
+        server.shutdown()
+        server.server_close()
+
+    watcher = threading.Thread(target=running_app)
+    watcher.start()
+    code = launcher.main(["--no-browser", "--restart"])
+    watcher.join()
+
+    assert code == 0
+    assert len(processes) == 1
+    assert "停止しています" in capsys.readouterr().out
+
+
+def test_stop_request_is_withdrawn_if_running_app_does_not_stop(fake_streamlit: int, tmp_path: Path) -> None:
+    request = tmp_path / "stop-request"
+
+    assert not launcher.request_stop(fake_streamlit, request, timeout=0.3, interval=0.1)
+
+    # 残すと、次に起動したアプリがすぐに止まってしまう
+    assert not request.exists()
+
+
+class _Terminal(io.StringIO):
+    def isatty(self) -> bool:
+        return True
+
+
+@pytest.mark.parametrize(("answer", "expected"), [("y", True), ("Yes", True), ("", False), ("n", False)])
+def test_confirm_restart_asks_user(monkeypatch: pytest.MonkeyPatch, answer: str, expected: bool) -> None:
+    monkeypatch.setattr(sys, "stdin", _Terminal())
+    monkeypatch.setattr(builtins, "input", lambda prompt: answer)
+
+    assert launcher.confirm_restart() is expected
+
+
+def test_confirm_restart_does_not_ask_without_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fail(prompt: str) -> str:
+        raise AssertionError("入力できない環境で確認してはいけない")
+
+    monkeypatch.setattr(sys, "stdin", io.StringIO())
+    monkeypatch.setattr(builtins, "input", fail)
+
+    assert not launcher.confirm_restart()
+
+
+def test_declining_restart_keeps_running_app(
+    monkeypatch: pytest.MonkeyPatch, fake_streamlit: int, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("VPS_PORT", str(fake_streamlit))
+    monkeypatch.setattr(sys, "stdin", _Terminal())
+    monkeypatch.setattr(builtins, "input", lambda prompt: "")
+    processes = _record_popen(monkeypatch, [0])
+
+    assert launcher.main(["--no-browser", "--ask-restart"]) == 0
+
+    assert processes == []
+    assert not _stop_request(tmp_path, fake_streamlit).exists()
+    assert "起動中の画面を開きます" in capsys.readouterr().out
+    assert launcher.streamlit_running(fake_streamlit)
+
+
+def test_leftover_stop_request_is_removed_before_start(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    port = _free_port()
+    monkeypatch.setenv("VPS_PORT", str(port))
+    request = _stop_request(tmp_path, port)
+    request.parent.mkdir(parents=True)
+    request.touch()
+    processes = _record_popen(monkeypatch, [subprocess.TimeoutExpired("streamlit", 0.5), 0])
+
+    # 前回の依頼が残っていても、起動直後に止めない
+    assert launcher.main(["--no-browser"]) == 0
+    assert not processes[0].terminated
+    assert not request.exists()
+
+
+def test_stop_request_stops_streamlit(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    request = tmp_path / "stop-request"
+    request.touch()
+    process = FakeProcess([], ROOT, [subprocess.TimeoutExpired("streamlit", 0.5), -15])
+
+    code = launcher.wait_for_streamlit(process, shutdown_timeout=5, stop_request=request)
+
+    assert code == launcher.STOPPED_FOR_RESTART_EXIT_CODE
+    assert process.terminated
+    assert not process.killed
+    assert not request.exists()
+    assert "再起動のため終了しました" in capsys.readouterr().out
+
+
+def test_streamlit_is_killed_if_it_does_not_stop_on_request(tmp_path: Path) -> None:
+    request = tmp_path / "stop-request"
+    request.touch()
+    timeout = subprocess.TimeoutExpired("streamlit", 0.5)
+    process = FakeProcess([], ROOT, [timeout, timeout, -9])
+
+    assert launcher.wait_for_streamlit(process, stop_request=request) == launcher.STOPPED_FOR_RESTART_EXIT_CODE
+    assert process.killed
+
+
+def test_streamlit_exit_code_is_returned_while_watching_stop_request(tmp_path: Path) -> None:
+    process = FakeProcess([], ROOT, [subprocess.TimeoutExpired("streamlit", 0.5), 2])
+
+    assert launcher.wait_for_streamlit(process, stop_request=tmp_path / "stop-request") == 2
+    assert not process.terminated
+
+
 @pytest.mark.parametrize(("launcher_name", "script_name"), [("setup.cmd", "setup.ps1"), ("start.cmd", "start.ps1")])
 def test_windows_launcher_calls_internal_powershell(launcher_name: str, script_name: str) -> None:
     command = (ROOT / launcher_name).read_bytes()
@@ -203,6 +352,10 @@ def test_start_runs_launcher_with_synced_venv() -> None:
     assert 'Join-Path $projectRoot "$venvName\\Scripts\\python.exe"' in start
     assert '$launcherArgs = @("-m", "volumio_playlist_studio.launcher")' in start
     assert 'if ($NoBrowser) { $launcherArgs += "--no-browser" }' in start
+    # ダブルクリックで起動したときだけ、起動中なら再起動するかを確かめる
+    assert 'if (-not $NoPause) { $launcherArgs += "--ask-restart" }' in start
+    # 別のウィンドウから再起動されたら、一時停止せずにウィンドウを閉じる
+    assert f"if ($appExit -eq {launcher.STOPPED_FOR_RESTART_EXIT_CODE}) {{ exit 0 }}" in start
     assert "uv run" not in start
 
 
@@ -215,6 +368,8 @@ def test_windows_ci_runs_setup_and_start_check() -> None:
     implementation = script.read_text(encoding="utf-8-sig")
     assert "scripts\\windows\\setup.ps1" in implementation
     assert '-m", "volumio_playlist_studio.launcher"' in implementation
+    assert '"--no-browser", "--restart"' in implementation
+    assert f"$process.ExitCode -eq {launcher.STOPPED_FOR_RESTART_EXIT_CODE}" in implementation
     assert "runs-on: windows-latest" in workflow
     assert "shell: powershell" in workflow
     assert ".\\tests\\windows\\test_setup_and_start.ps1" in workflow
