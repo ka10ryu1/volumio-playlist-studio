@@ -20,7 +20,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # 解析・分類ロジックのバージョン。出力が変わる変更では必ず更新する。
 # 評価データがどのバージョンの結果に対するものかを追跡するために、DB の各結果に記録する。
 ANALYSIS_VERSION = "features-1"
-RULE_VERSION = "rules-1"
+RULE_VERSION = "rules-2"
 JEV_QUESTION_VERSION = "jev-questions-1"
 # 自由記述の雰囲気の質問定義のバージョン。曲の質問とは別に管理し、更新しても曲の再判定の対象にはしない
 JEV_MOOD_QUESTION_VERSION = "jev-mood-questions-1"

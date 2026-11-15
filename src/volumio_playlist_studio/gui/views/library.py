@@ -5,7 +5,7 @@ from pathlib import Path
 import streamlit as st
 
 from volumio_playlist_studio.analyzer import is_analyzable
-from volumio_playlist_studio.catalog import effective_classifications
+from volumio_playlist_studio.catalog import effective_classifications, genre_tag_counts
 from volumio_playlist_studio.classify.jev import ENGINE_NAME as JEV_ENGINE
 from volumio_playlist_studio.classify.rules import ENGINE_NAME as RULES_ENGINE
 from volumio_playlist_studio.config import ANALYSIS_VERSION, is_typesafe_api_key_set
@@ -40,6 +40,7 @@ def render(ctx: PageContext) -> None:
 
     tracks = list_tracks(ctx.conn, ctx.library_root)
     _track_table(ctx, tracks)
+    _genre_tags(tracks)
     _errors(ctx, ctx.library_root)
     _duplicates(ctx, ctx.library_root, {t.id: t for t in tracks})
 
@@ -249,6 +250,28 @@ def _track_detail(ctx: PageContext, track: Track) -> None:
                 stored = analysis_store.load_classifications(ctx.conn, engine).get(track.id)
                 st.markdown(f"**判定結果: {title}**")
                 classification_details(None if stored is None else stored.result)
+
+
+def _genre_tags(tracks: list[Track]) -> None:
+    counts = genre_tag_counts(tracks)
+    unmatched = [c for c in counts if c.tag and c.genre is None]
+    with st.expander(f"ジャンルタグの表記（{len(counts)} 種類、当てはまらない表記 {len(unmatched)} 種類）"):
+        st.caption(
+            "ルールベースの分類が、ファイルのジャンルタグをどのジャンルとして扱うかの一覧です。"
+            "国・場面・編成など、ジャンルを表さない表記は「不明」になります。"
+            "表記はこの画面だけに表示し、確認用レポートには含めません。"
+        )
+        only_unmatched = st.checkbox("当てはまらない表記だけを表示")
+        shown = unmatched if only_unmatched else counts
+        if not shown:
+            st.caption("該当する表記はありません。")
+            return
+
+        st.dataframe(
+            [{"表記": c.tag or "（タグなし）", "ジャンル": genre_label(c.genre), "曲数": c.tracks} for c in shown],
+            hide_index=True,
+            width="stretch",
+        )
 
 
 def _errors(ctx: PageContext, library_root: str) -> None:

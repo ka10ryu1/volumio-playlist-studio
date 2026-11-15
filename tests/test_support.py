@@ -6,8 +6,15 @@ import sqlite3
 from pathlib import Path, PureWindowsPath
 
 import pytest
+from conftest import TrackFactory
 
-from volumio_playlist_studio.catalog import UNKNOWN_GENRE_LABEL, dashboard_stats, load_candidates
+from volumio_playlist_studio.catalog import (
+    UNKNOWN_GENRE_LABEL,
+    GenreTagCount,
+    dashboard_stats,
+    genre_tag_counts,
+    load_candidates,
+)
 from volumio_playlist_studio.config import AnalysisParams, is_typesafe_api_key_set, load_app_config, load_env_file
 from volumio_playlist_studio.jobs import BackgroundJob, JobControl, JobError, JobState
 from volumio_playlist_studio.library_paths import (
@@ -281,3 +288,20 @@ def test_sample_data_cli(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> 
     conn = connect(tmp_path / "demo.sqlite3")
     assert len(list_tracks(conn, DEMO_LIBRARY_ROOT)) == 60
     conn.close()
+
+
+def test_genre_tag_counts_groups_tags_and_applies_current_rules(make_track: TrackFactory) -> None:
+    tags = ["Rock", " Rock ", "Rock", "邦楽", "邦楽", None, "  ", "Blues"]
+    tracks = [make_track(genre=tag) for tag in tags]
+
+    # 曲数の多い順。同数なら表記の順。前後の空白だけが違う表記と、空のタグはそれぞれ 1 つにまとめる
+    assert genre_tag_counts(tracks) == [
+        GenreTagCount("Rock", Genre.ROCK, 3),
+        GenreTagCount("", None, 2),
+        GenreTagCount("邦楽", None, 2),
+        GenreTagCount("Blues", Genre.RNB_SOUL, 1),
+    ]
+
+
+def test_genre_tag_counts_for_empty_library() -> None:
+    assert genre_tag_counts([]) == []
