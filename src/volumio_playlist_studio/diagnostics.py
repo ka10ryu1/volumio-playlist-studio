@@ -38,6 +38,7 @@ from volumio_playlist_studio.models import (
 )
 from volumio_playlist_studio.sample_data import DEMO_LIBRARY_ROOT
 from volumio_playlist_studio.storage import analysis as analysis_store
+from volumio_playlist_studio.storage import settings_store
 from volumio_playlist_studio.storage.database import current_version, utc_now
 from volumio_playlist_studio.storage.jev_usage import JevUsageKind, list_usage
 from volumio_playlist_studio.storage.tracks import list_tracks
@@ -107,7 +108,7 @@ def build_report(conn: sqlite3.Connection, context: ReportContext) -> str:
         _tag_section(tracks),
         _volumio_section(conn, context.volumio_host, tracks),
         _jev_section(conn, root, rules, jev),
-        _unknown_genre_section(tracks, rules, jev, JevSettings()),
+        _unknown_genre_section(tracks, rules, jev, settings_store.get_jev_settings(conn)),
     ):
         lines += ["", *section]
 
@@ -370,6 +371,11 @@ def _rules_unknown_breakdown(tracks: list[Track], rules: dict[int, Classificatio
 
 
 def _jev_unknown_breakdown(jev: dict[int, ClassificationResult], settings: JevSettings) -> list[str]:
+    """Jev でジャンルが不明になった原因の内訳。
+
+    閾値は設定画面で変えられ、判定した時点の値は結果に残っていない。そのため原因は、判定時に残した
+    notes と confidence だけで分け、現在の設定は閾値を下げた場合の試算にだけ使う。
+    """
     unknown = [r for r in jev.values() if r.genre is None]
     lines = [f"Jev（判定済み {len(jev)} 曲のうち不明 {len(unknown)} 曲）:", ""]
     if not unknown:
@@ -382,54 +388,70 @@ def _jev_unknown_breakdown(jev: dict[int, ClassificationResult], settings: JevSe
         determinable = recorded_genre_determinable(r)
         if determinable is not None:
             undeterminable.append((determinable, r.genre_confidence))
-        elif r.genre_confidence is not None and r.genre_confidence < settings.min_confidence:
+        elif r.genre_confidence is not None:
+            # 判断材料が足りたのに不明になるのは、confidence が閾値未満だった場合だけ
             low_confidence.append(r.genre_confidence)
 
     lines += [
-        f"- 判断材料が不足（genre_determinable の確率が {settings.genre_determinable_threshold} 未満）: "
-        f"{len(undeterminable)} 曲",
-        f"- ジャンルの confidence が {settings.min_confidence} 未満: {len(low_confidence)} 曲",
+        f"- 判断材料が不足（genre_determinable の確率が閾値未満）: {len(undeterminable)} 曲",
+        f"- ジャンルの confidence が閾値未満: {len(low_confidence)} 曲",
     ]
     unexplained = len(unknown) - len(undeterminable) - len(low_confidence)
     if unexplained:
         lines.append(f"- 理由を特定できない: {unexplained} 曲")
 
+    lines.append(
+        f"- 現在の設定: genre_determinable の閾値 {settings.genre_determinable_threshold}、"
+        f"confidence の閾値 {settings.min_confidence}（判定した時点の設定とは異なる場合がある）"
+    )
     if undeterminable:
         lines += [
             "",
-            "判断材料が不足した曲の genre_determinable の確率（notes に残っている小数 2 桁の値）:",
+            "判断材料が不足した曲の genre_determinable の確率（notes に残っている小数 2 桁の値。"
+            "丸めにより、閾値ちょうどの値は閾値未満の値を含む）:",
             "",
-            *_histogram([p for p, _ in undeterminable], settings.genre_determinable_threshold),
-            "",
-            f"genre_determinable の閾値を下げた場合に判定済みになる曲（confidence が {settings.min_confidence} "
-            "以上の曲に限る）:",
-            "",
+            *_histogram([p for p, _ in undeterminable]),
+            *_relaxed_thresholds(undeterminable, len(unknown), settings),
         ]
-        for threshold in _RELAXED_DETERMINABLE_THRESHOLDS:
-            recovered = sum(
-                1 for p, c in undeterminable if p >= threshold and c is not None and c >= settings.min_confidence
-            )
-            lines.append(f"- {threshold}: {recovered} 曲（不明 {len(unknown)} 曲 → {len(unknown) - recovered} 曲）")
 
     if low_confidence:
-        lines += [
-            "",
-            "confidence が不足した曲のジャンルの confidence:",
-            "",
-            *_histogram(low_confidence, settings.min_confidence),
-        ]
+        lines += ["", "confidence が不足した曲のジャンルの confidence:", "", *_histogram(low_confidence)]
 
     return lines
 
 
-def _histogram(values: list[float], upper: float) -> list[str]:
-    """0 から `upper` 未満の値を、幅 `_HISTOGRAM_STEP` の区間ごとに数えた表を返す。"""
+def _relaxed_thresholds(
+    undeterminable: list[tuple[float, float | None]], unknown: int, settings: JevSettings
+) -> list[str]:
+    """genre_determinable の閾値を現在の設定より下げた場合に、判定済みになる曲数を試算する。"""
+    thresholds = [t for t in _RELAXED_DETERMINABLE_THRESHOLDS if t < settings.genre_determinable_threshold]
+    if not thresholds:
+        return []
+
+    lines = [
+        "",
+        "genre_determinable の閾値を下げた場合に判定済みになる曲（confidence が現在の閾値 "
+        f"{settings.min_confidence} 以上の曲に限る）:",
+        "",
+    ]
+    for threshold in thresholds:
+        recovered = sum(
+            1 for p, c in undeterminable if p >= threshold and c is not None and c >= settings.min_confidence
+        )
+        lines.append(f"- {threshold}: {recovered} 曲（不明 {unknown} 曲 → {unknown - recovered} 曲）")
+
+    return lines
+
+
+def _histogram(values: list[float]) -> list[str]:
+    """0〜1 の値を、幅 `_HISTOGRAM_STEP` の区間ごとに数えた表を返す。最後の区間は 1 を含む。"""
     # 0.1 * 3 のような誤差で 0.3 ちょうどの値が下の区間に入らないよう、小数 2 桁に丸める
-    edges = [round(i * _HISTOGRAM_STEP, 2) for i in range(round(upper / _HISTOGRAM_STEP))] + [upper]
+    edges = [round(i * _HISTOGRAM_STEP, 2) for i in range(round(1 / _HISTOGRAM_STEP) + 1)]
     lines = ["| 範囲 | 曲数 |", "|---|---:|"]
     for low, high in pairwise(edges):
-        count = sum(1 for v in values if low <= v < high)
-        lines.append(f"| {low:.1f} 以上 {high:.1f} 未満 | {count} |")
+        is_last = high == edges[-1]
+        count = sum(1 for v in values if low <= v < high or (is_last and v == high))
+        lines.append(f"| {low:.1f} 以上 {high:.1f} {'以下' if is_last else '未満'} | {count} |")
 
     return lines
 
