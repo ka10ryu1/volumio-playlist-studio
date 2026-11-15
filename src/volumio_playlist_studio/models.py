@@ -381,5 +381,5 @@ class ClassificationSource(StrEnum):
 CLASSIFICATION_SOURCE_LABELS: dict[ClassificationSource, str] = {
     ClassificationSource.RULES: "ルールベースのみ（タグ＋音響特徴量）",
     ClassificationSource.JEV: "Jev のみ（未判定の曲は使わない）",
-    ClassificationSource.JEV_THEN_RULES: "Jev を優先し、未判定の曲はルールベース",
+    ClassificationSource.JEV_THEN_RULES: "Jev を優先し、未判定の曲はルールベース（ジャンル不明はルールベースで補う）",
 }

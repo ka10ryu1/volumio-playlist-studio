@@ -6,12 +6,13 @@ import sqlite3
 from pathlib import Path, PureWindowsPath
 
 import pytest
-from conftest import TrackFactory
+from conftest import ClassificationFactory, TrackFactory
 
 from volumio_playlist_studio.catalog import (
     UNKNOWN_GENRE_LABEL,
     GenreTagCount,
     dashboard_stats,
+    effective_classifications,
     genre_tag_counts,
     load_candidates,
 )
@@ -24,10 +25,11 @@ from volumio_playlist_studio.library_paths import (
     redact_paths,
     resolve_library_input,
 )
-from volumio_playlist_studio.models import ClassificationSource, Genre
+from volumio_playlist_studio.models import Attribute, ClassificationSource, Genre, TitleSource, TrackMetadata
 from volumio_playlist_studio.sample_data import DEMO_LIBRARY_ROOT, generate_sample_audio, load_demo_library, main
 from volumio_playlist_studio.scanner import scan_library
-from volumio_playlist_studio.storage.database import connect
+from volumio_playlist_studio.storage.analysis import save_classification
+from volumio_playlist_studio.storage.database import connect, transaction
 from volumio_playlist_studio.storage.evaluations import (
     EvaluationLabel,
     Split,
@@ -35,7 +37,7 @@ from volumio_playlist_studio.storage.evaluations import (
     add_to_evaluation_set,
     save_label,
 )
-from volumio_playlist_studio.storage.tracks import list_tracks
+from volumio_playlist_studio.storage.tracks import list_tracks, upsert_track
 
 
 def test_load_app_config_from_environment() -> None:
@@ -255,6 +257,63 @@ def test_candidates_prefer_human_corrected_genre(db: sqlite3.Connection) -> None
     assert candidates[track.id].genre == Genre.WORLD
     assert all(c.classification is not None for c in candidates.values())
     assert all(c.classification is None for c in load_candidates(db, DEMO_LIBRARY_ROOT, ClassificationSource.JEV))
+
+
+def _meta(rel_path: str) -> TrackMetadata:
+    return TrackMetadata(
+        rel_path=rel_path, title="曲", artist=None, album=None, genre=None, year=None, track_number=None,
+        duration_sec=200.0, bitrate=None, sample_rate=None, channels=None, codec=None, file_size=100, mtime_ns=1,
+        title_source=TitleSource.TAG, tags_repaired=False, quick_hash=None,
+    )  # fmt: skip
+
+
+def test_jev_then_rules_fills_unknown_jev_genre_with_rules_genre(
+    db: sqlite3.Connection, make_classification: ClassificationFactory
+) -> None:
+    # (ルールベース, Jev)。"-" はそのエンジンで未判定
+    rows: list[tuple[Genre | str | None, Genre | str | None]] = [
+        (Genre.ROCK, None),
+        (Genre.ROCK, Genre.JAZZ),
+        (None, None),
+        (Genre.POP, "-"),
+        (None, Genre.POP),
+        ("-", None),
+    ]
+    with transaction(db):
+        ids = []
+        for i, (rule_genre, jev_genre) in enumerate(rows):
+            track_id = upsert_track(db, "/music", _meta(f"{i:02}.flac"), None)
+            ids.append(track_id)
+            if rule_genre is None or isinstance(rule_genre, Genre):
+                save_classification(db, track_id, make_classification(rule_genre, energy=0.1))
+
+            if jev_genre is None or isinstance(jev_genre, Genre):
+                save_classification(db, track_id, make_classification(jev_genre, engine="jev", energy=0.9))
+
+    merged = effective_classifications(db, ClassificationSource.JEV_THEN_RULES)
+
+    assert [merged[i].genre if i in merged else "-" for i in ids] == [
+        Genre.ROCK,  # Jev が不明なら、ルールベースのジャンルで補う
+        Genre.JAZZ,  # Jev のジャンルがあれば Jev を優先する
+        None,
+        Genre.POP,  # Jev で未判定ならルールベースの結果
+        Genre.POP,
+        None,
+    ]
+    # ジャンルを補った曲も、属性は Jev の結果を使い、補ったことを notes に残す
+    filled = merged[ids[0]]
+    assert (filled.engine, filled.attribute_value(Attribute.ENERGY)) == ("jev", 0.9)
+    assert any("ルールベース" in note for note in filled.notes)
+    assert all("ルールベース" not in note for note in merged[ids[1]].notes)
+
+    # 「のみ」の設定では補わない
+    assert effective_classifications(db, ClassificationSource.JEV)[ids[0]].genre is None
+    assert effective_classifications(db, ClassificationSource.RULES)[ids[4]].genre is None
+    # 選曲の候補とダッシュボードのジャンルにも反映される
+    candidates = {c.track.id: c for c in load_candidates(db, "/music", ClassificationSource.JEV_THEN_RULES)}
+    assert candidates[ids[0]].genre == Genre.ROCK
+    stats = dashboard_stats(db, "/music", ClassificationSource.JEV_THEN_RULES)
+    assert stats.genre_distribution == {"ロック": 1, "ポップ": 2, "ジャズ": 1, UNKNOWN_GENRE_LABEL: 2}
 
 
 def test_generated_sample_audio_can_be_scanned(db: sqlite3.Connection, tmp_path: Path) -> None:

@@ -2,7 +2,7 @@
 
 import sqlite3
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from volumio_playlist_studio.albums import album_key, group_albums
 from volumio_playlist_studio.analyzer import is_analyzable
@@ -74,7 +74,12 @@ class DashboardStats:
 def effective_classifications(
     conn: sqlite3.Connection, source: ClassificationSource
 ) -> dict[int, ClassificationResult]:
-    """選曲に使う分類結果を楽曲 ID ごとに返す。各エンジンについて楽曲ごとに最新の結果を使う。"""
+    """選曲に使う分類結果を楽曲 ID ごとに返す。各エンジンについて楽曲ごとに最新の結果を使う。
+
+    Jev を優先する場合、Jev がジャンルを不明とした曲は、ルールベースのジャンルで補う。Jev はタグが
+    あっても判断材料が足りないとしてジャンルを不明にすることが多く、そのままではルールベースで決まって
+    いたジャンルまで失うため（issue #41）。属性・ムードは Jev の結果を使う。
+    """
     rules = {k: v.result for k, v in analysis_store.load_classifications(conn, RULES_ENGINE).items()}
     if source == ClassificationSource.RULES:
         return rules
@@ -83,7 +88,25 @@ def effective_classifications(
     if source == ClassificationSource.JEV:
         return jev
 
-    return {**rules, **jev}
+    merged = {**rules, **jev}
+    for track_id, result in jev.items():
+        rule = rules.get(track_id)
+        if result.genre is None and rule is not None and rule.genre is not None:
+            merged[track_id] = _with_rule_genre(result, rule)
+
+    return merged
+
+
+def _with_rule_genre(jev: ClassificationResult, rule: ClassificationResult) -> ClassificationResult:
+    """Jev の結果のジャンルを、ルールベースの結果のジャンルに置き換える。"""
+    note = f"ジャンルは Jev で不明のため、ルールベースの判定（{rule.engine_version}）を使用"
+    return replace(
+        jev,
+        genre=rule.genre,
+        genre_confidence=rule.genre_confidence,
+        genre_probabilities=rule.genre_probabilities,
+        notes=[*jev.notes, note],
+    )
 
 
 def load_candidates(conn: sqlite3.Connection, library_root: str, source: ClassificationSource) -> list[Candidate]:
