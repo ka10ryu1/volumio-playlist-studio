@@ -2,7 +2,7 @@
 
 import sqlite3
 
-from test_gui import run_view, submit
+from test_gui import click, run_view, submit
 
 from volumio_playlist_studio.models import (
     ClassificationSource,
@@ -29,4 +29,17 @@ def test_settings_view_saves_values(demo: sqlite3.Connection) -> None:
     next(r for r in at.radio if r.label == "選曲に使う分類結果").set_value(ClassificationSource.RULES)
     submit(at, "engine")
     assert settings_store.get_str(demo, settings_store.CLASSIFICATION_SOURCE_KEY) == "rules"
+    assert not at.exception
+
+
+def test_settings_view_shows_report_for_issue(demo: sqlite3.Connection) -> None:
+    at = run_view("settings_page")
+    assert not [c for c in at.code if c.language == "markdown"]
+
+    click(at, "レポートを作成")
+
+    [report] = [c.value for c in at.code if c.language == "markdown"]
+    assert report.startswith("## 確認用レポート\n")
+    assert "サンプルデータを表示中" in report
+    assert "- 登録されている曲: 60 曲" in report
     assert not at.exception

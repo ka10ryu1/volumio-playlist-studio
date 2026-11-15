@@ -1,4 +1,4 @@
-"""設定画面。音楽フォルダ・Volumio 接続先・Jev・解析パラメータ・分類エンジンの設定と、ログの確認を行う。"""
+"""設定画面。音楽フォルダ・Volumio 接続先・Jev・解析パラメータ・分類エンジンの設定と、ログ・確認用レポートの表示。"""
 
 from collections import deque
 from dataclasses import replace
@@ -6,11 +6,13 @@ from dataclasses import replace
 import streamlit as st
 
 from volumio_playlist_studio.config import (
+    PROJECT_ROOT,
     TYPESAFE_API_KEY_ENV,
     VOLUMIO_HOST_ENV,
     AnalysisParams,
     is_typesafe_api_key_set,
 )
+from volumio_playlist_studio.diagnostics import ReportContext, build_report
 from volumio_playlist_studio.gui.context import PageContext
 from volumio_playlist_studio.gui.widgets import music_folder_form, page_title
 from volumio_playlist_studio.models import CLASSIFICATION_SOURCE_LABELS, ClassificationSource
@@ -29,7 +31,7 @@ def render(ctx: PageContext) -> None:
     """設定画面を表示する。"""
     page_title("設定")
 
-    general, advanced, logs = st.tabs(["一般", "解析・AI", "ログ"], key="settings-tabs")
+    general, advanced, logs = st.tabs(["一般", "解析・AI", "ログ・レポート"], key="settings-tabs")
     with general:
         st.subheader("音楽フォルダ")
         st.caption(f"現在: {'サンプルデータ' if ctx.is_demo else ctx.library_root or '未設定'}")
@@ -46,6 +48,7 @@ def render(ctx: PageContext) -> None:
             _analysis_section(ctx)
 
     with logs:
+        _report_section(ctx)
         _log_section(ctx)
 
 
@@ -193,6 +196,18 @@ def _engine_section(ctx: PageContext) -> None:
 
             st.success("保存しました。")
             st.rerun()
+
+
+def _report_section(ctx: PageContext) -> None:
+    st.subheader("確認用レポート")
+    st.caption(
+        "スキャン・解析・照合・Jev の件数や所要時間をまとめます。"
+        "右上のボタンでコピーし、GitHub の issue に貼ってください。"
+        "曲名・アーティスト名・フォルダ名・Volumio の接続先は含めません。"
+    )
+    if st.button("レポートを作成"):
+        report = build_report(ctx.conn, ReportContext(ctx.library_root, ctx.volumio_host, PROJECT_ROOT))
+        st.code(report, language="markdown")
 
 
 def _log_section(ctx: PageContext) -> None:
