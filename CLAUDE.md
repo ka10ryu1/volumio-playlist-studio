@@ -48,4 +48,4 @@ uv run python -m volumio_playlist_studio.launcher   # WSL・Linux
 
 - LAN モード（`VPS_LAN=1`）では、localhost と判定できない接続に PIN を求める（`gui/lan.py`）。PIN 画面より前に、ライブラリの内容を表示する処理を置かない
 
-GUI のテストは `streamlit.testing.v1.AppTest` で行う（`tests/test_gui.py`）。画面単位のテストは、`view_script` で 1 画面だけを表示して操作する。
+GUI のテストは `streamlit.testing.v1.AppTest` で行う。画面単位のテストは `tests/test_gui_<画面>.py` に置き、`view_script` で 1 画面だけを表示して操作する。アプリ全体や複数の画面にまたがるテストと、画面を操作するヘルパー（`run_view`、`click` など）は `tests/test_gui.py` に置き、画面ごとのファイルから import する。

@@ -24,7 +24,9 @@ from volumio_playlist_studio.models import (
     TitleSource,
     Track,
 )
-from volumio_playlist_studio.storage.database import connect
+from volumio_playlist_studio.sample_data import DEMO_LIBRARY_ROOT, load_demo_library
+from volumio_playlist_studio.storage import settings_store
+from volumio_playlist_studio.storage.database import connect, transaction
 
 SAMPLE_RATE = 22050
 
@@ -71,6 +73,24 @@ def _isolate_env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv("VPS_PORT", "")
     monkeypatch.setenv("VPS_LAN", "")
     monkeypatch.setenv("VPS_LAN_ADDRESS", "")
+
+
+@pytest.fixture
+def app_db(tmp_path: Path) -> Iterator[sqlite3.Connection]:
+    """画面（AppTest）が開くのと同じ DB。_isolate_env の VPS_DATA_DIR に合わせる。"""
+    conn = connect(tmp_path / "app-data" / "studio.sqlite3")
+    yield conn
+    conn.close()
+
+
+@pytest.fixture
+def demo(app_db: sqlite3.Connection) -> sqlite3.Connection:
+    """サンプルデータを読み込み、音楽フォルダに設定した状態の app_db。"""
+    load_demo_library(app_db)
+    with transaction(app_db):
+        settings_store.set_value(app_db, settings_store.MUSIC_ROOT_KEY, DEMO_LIBRARY_ROOT)
+
+    return app_db
 
 
 def sine(seconds: float, freq: float = 440.0, amplitude: float = 0.3, sr: int = SAMPLE_RATE) -> np.ndarray:
