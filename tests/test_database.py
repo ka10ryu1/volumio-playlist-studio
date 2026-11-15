@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from volumio_playlist_studio.storage import database
+from volumio_playlist_studio.storage import database, settings_store
 from volumio_playlist_studio.storage.database import SCHEMA_VERSION, connect, current_version, transaction
 
 
@@ -144,4 +144,47 @@ def test_existing_playlists_stay_visible_after_adding_deleted_at(
     assert current_version(upgraded) == SCHEMA_VERSION
     row = upgraded.execute("SELECT name, satisfaction, deleted_at FROM playlists").fetchone()
     assert tuple(row) == ("p", 4, None)
+    upgraded.close()
+
+
+def _create_version_8_database(path: Path, monkeypatch: pytest.MonkeyPatch, jev_settings: object | None) -> None:
+    # 子供向けの判定の閾値の既定値を 0.9 に上げる前のバージョン（8）の DB を作る
+    with monkeypatch.context() as patched:
+        patched.setattr(database, "MIGRATIONS", database.MIGRATIONS[:8])
+        patched.setattr(database, "SCHEMA_VERSION", 8)
+        old = connect(path)
+        if jev_settings is not None:
+            with transaction(old):
+                settings_store.set_value(old, settings_store.JEV_SETTINGS_KEY, jev_settings)
+
+        old.close()
+
+
+@pytest.mark.parametrize(("stored", "expected"), [(0.5, 0.9), (0.7, 0.7), (0.95, 0.95)])
+def test_old_default_children_threshold_is_raised_to_0_9(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, stored: float, expected: float
+) -> None:
+    path = tmp_path / "db.sqlite3"
+    # Jev のフォームを保存すると、画面にない閾値も旧既定値のまま全項目が書き込まれていた
+    _create_version_8_database(
+        path, monkeypatch, {"model": "jev-x", "children_threshold": stored, "max_tracks_per_run": 7}
+    )
+
+    upgraded = connect(path)
+
+    assert current_version(upgraded) == SCHEMA_VERSION
+    settings = settings_store.get_jev_settings(upgraded)
+    assert (settings.children_threshold, settings.model, settings.max_tracks_per_run) == (expected, "jev-x", 7)
+    upgraded.close()
+
+
+def test_children_threshold_migration_without_saved_settings(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = tmp_path / "db.sqlite3"
+    _create_version_8_database(path, monkeypatch, None)
+
+    upgraded = connect(path)
+
+    # 未保存の DB には設定を作らず、既定値（0.9）を使う
+    assert settings_store.get_value(upgraded, settings_store.JEV_SETTINGS_KEY) is None
+    assert settings_store.get_jev_settings(upgraded).children_threshold == 0.9
     upgraded.close()

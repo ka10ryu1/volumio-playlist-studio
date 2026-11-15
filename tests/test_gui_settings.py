@@ -18,9 +18,13 @@ def test_settings_view_saves_values(demo: sqlite3.Connection) -> None:
     submit(at, "volumio-host")  # Volumio 接続先の保存
     assert settings_store.get_str(demo, settings_store.VOLUMIO_HOST_KEY) == "volumio.local"
 
+    children = next(s for s in at.slider if "子供向け" in s.label)
+    assert children.value == 0.9
+    children.set_value(0.8)
     next(n for n in at.number_input if n.label == "1 回の実行で判定する曲数の上限").set_value(5)
     submit(at, "jev-settings")
-    assert settings_store.get_jev_settings(demo).max_tracks_per_run == 5
+    saved = settings_store.get_jev_settings(demo)
+    assert (saved.max_tracks_per_run, saved.children_threshold) == (5, 0.8)
 
     next(n for n in at.number_input if n.label == "解析する区間の数").set_value(4)
     submit(at, "analysis-params")

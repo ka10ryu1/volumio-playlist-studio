@@ -116,7 +116,7 @@ class JevSettings:
     min_confidence: float = 0.5
     genre_determinable_threshold: float = 0.5
     expressible_threshold: float = 0.5
-    children_threshold: float = 0.5
+    children_threshold: float = 0.9
     send_titles: bool = True
     max_tracks_per_run: int = 20
     max_consecutive_failures: int = 3

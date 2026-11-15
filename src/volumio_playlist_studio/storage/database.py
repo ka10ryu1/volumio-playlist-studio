@@ -238,6 +238,16 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         )
         """,
     ),
+    (
+        # 子供向けの判定の閾値の既定値を 0.5 から 0.9 に上げた（0.9 未満は誤検知だったため）。Jev の設定を
+        # 保存すると全項目が書き込まれるため、既定値を変えるだけでは保存済みの DB に反映されない。
+        # 画面に入力欄がなかったころに保存された 0.5 は旧既定値なので、それだけを書き換える
+        """
+        UPDATE app_settings
+        SET value_json = json_set(value_json, '$.children_threshold', 0.9)
+        WHERE key = 'jev_settings' AND json_extract(value_json, '$.children_threshold') = 0.5
+        """,
+    ),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

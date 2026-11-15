@@ -127,6 +127,13 @@ def _jev_section(ctx: PageContext) -> None:
             settings.genre_determinable_threshold,
             step=0.05,
         )
+        children = st.slider(
+            "アルバムが「子供向け」である確率がこれ以上なら、収録曲を子供向けとして扱う",
+            0.0,
+            1.0,
+            settings.children_threshold,
+            step=0.05,
+        )
         send_titles = st.checkbox("曲名を送信する", value=settings.send_titles)
         max_tracks = st.number_input("1 回の実行で判定する曲数の上限", 1, 500, settings.max_tracks_per_run)
         if st.form_submit_button("保存"):
@@ -135,13 +142,17 @@ def _jev_section(ctx: PageContext) -> None:
                 model=model.strip() or settings.model,
                 min_confidence=min_confidence,
                 genre_determinable_threshold=determinable,
+                children_threshold=children,
                 send_titles=send_titles,
                 max_tracks_per_run=int(max_tracks),
             )
             with transaction(ctx.conn):
                 settings_store.set_jev_settings(ctx.conn, updated)
 
-            st.success("保存しました。判定基準の変更は、次に Jev で判定した曲から反映されます。")
+            st.success(
+                "保存しました。判定基準の変更は、次に Jev で判定した曲から反映されます"
+                "（子供向けの閾値は再判定なしで次の選曲から反映されます）。"
+            )
 
 
 def _analysis_section(ctx: PageContext) -> None:
