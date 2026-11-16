@@ -16,6 +16,7 @@ from volumio_playlist_studio.gui.views import (
     playlist_page,
     settings_page,
 )
+from volumio_playlist_studio.models import Genre
 
 
 def main() -> None:
@@ -36,12 +37,23 @@ def main() -> None:
             return
 
         playlist_page.preserve_inputs()
+
+        def open_playlist(genre: Genre | None) -> None:
+            playlist_page.suggest_genre(genre)
+            st.switch_page(pages[2])
+
+        def open_manage(playlist_id: int | None) -> None:
+            manage_page.select_playlist(playlist_id)
+            st.switch_page(pages[3])
+
         pages = [
             st.Page(
                 lambda: dashboard.render(
                     ctx,
-                    on_playlist=lambda: st.switch_page(pages[2]),
+                    on_playlist=open_playlist,
                     on_library=lambda: st.switch_page(pages[1]),
+                    on_manage=open_manage,
+                    on_evaluation=lambda: st.switch_page(pages[4]),
                 ),
                 title="ダッシュボード",
                 icon="📊",

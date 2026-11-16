@@ -103,7 +103,7 @@ def test_app_starts_without_library_and_loads_demo() -> None:
 
     metrics = {m.label: m.value for m in at.metric}
     assert metrics["登録楽曲数"] == "60"
-    assert metrics["未解析"] == "0"
+    assert any(m.value == "音響解析済み **60 曲**　／　未解析 **0 曲**" for m in at.markdown)
 
 
 def test_refresh_button_shows_latest_data(app_db: sqlite3.Connection) -> None:
