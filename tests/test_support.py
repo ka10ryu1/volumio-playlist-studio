@@ -259,6 +259,20 @@ def test_candidates_prefer_human_corrected_genre(db: sqlite3.Connection) -> None
     assert all(c.classification is None for c in load_candidates(db, DEMO_LIBRARY_ROOT, ClassificationSource.JEV))
 
 
+def test_dashboard_pending_evaluations_only_counts_current_library(db: sqlite3.Connection) -> None:
+    load_demo_library(db)
+    tracks = list_tracks(db, DEMO_LIBRARY_ROOT)
+    with transaction(db):
+        other = upsert_track(db, "/other-music", _meta("other.flac"), None)
+        add_to_evaluation_set(db, {tracks[0].id: Split.TUNING, tracks[1].id: Split.HOLDOUT, other: Split.TUNING})
+        save_label(db, EvaluationLabel(tracks[1].id, Split.HOLDOUT, genre_verdict=Verdict.PENDING))
+
+    stats = dashboard_stats(db, DEMO_LIBRARY_ROOT, ClassificationSource.RULES)
+    assert stats.pending_evaluations == 1
+    assert dashboard_stats(db, "/other-music", ClassificationSource.RULES).pending_evaluations == 1
+    assert dashboard_stats(db, "/empty-music", ClassificationSource.RULES).pending_evaluations == 0
+
+
 def _meta(rel_path: str) -> TrackMetadata:
     return TrackMetadata(
         rel_path=rel_path, title="曲", artist=None, album=None, genre=None, year=None, track_number=None,

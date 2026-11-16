@@ -83,6 +83,8 @@ _INPUT_KEYS = (
     "pl_edit_track",
 )
 _INPUT_VALUES_KEY = "pl_input_values"
+_SUGGESTED_GENRE_KEY = "pl_suggested_genre"
+_GENRE_APPLIED_KEY = "pl_genre_applied"
 
 type Request = PlaylistRequest | CircleRequest
 type Result = GenerationResult[PlaylistRequest] | GenerationResult[CircleRequest]
@@ -112,6 +114,42 @@ def preserve_inputs() -> None:
             values[key] = st.session_state[key]
 
 
+def suggest_genre(genre: Genre | None) -> None:
+    """ダッシュボードで選んだジャンルを提案として受け取り、編集中の条件は保持する。"""
+    if genre is None:
+        st.session_state.pop(_SUGGESTED_GENRE_KEY, None)
+    else:
+        st.session_state[_SUGGESTED_GENRE_KEY] = genre
+
+
+def _genre_suggestion() -> bool:
+    """明示的に反映したときだけジャンル条件を変更する。生成済みの曲には触れない。"""
+    if st.session_state.pop(_GENRE_APPLIED_KEY, False):
+        st.success("ジャンル条件を反映しました。「プレイリストを生成」で曲を選び直せます。")
+        return True
+
+    genre = st.session_state.get(_SUGGESTED_GENRE_KEY)
+    if genre is None:
+        return False
+
+    with st.container(border=True):
+        st.write(f"ダッシュボードで選んだジャンル: {genre_label(genre)}")
+        st.caption("反映すると「指定ジャンルのみ」に変更します。ほかの条件・編集中の曲・名前は保持します。")
+        with st.container(horizontal=True):
+            st.button("ジャンル条件に反映", on_click=_apply_genre, args=(genre,))
+            st.button("見送る", on_click=suggest_genre, args=(None,))
+
+    return False
+
+
+def _apply_genre(genre: Genre) -> None:
+    # 本文描画前のコールバックで反映し、入力保持処理に古い条件が退避されるのを防ぐ。
+    st.session_state["pl_genre_mode"] = GenreMode.ONLY
+    st.session_state["pl_genres"] = [genre]
+    st.session_state.pop(_SUGGESTED_GENRE_KEY, None)
+    st.session_state[_GENRE_APPLIED_KEY] = True
+
+
 def render(ctx: PageContext, *, on_manage: Callable[[], None] | None = None) -> None:
     """プレイリスト作成画面を表示する。
 
@@ -128,11 +166,12 @@ def render(ctx: PageContext, *, on_manage: Callable[[], None] | None = None) -> 
     for key, value in st.session_state.get(_INPUT_VALUES_KEY, {}).items():
         st.session_state.setdefault(key, value)
 
+    genre_applied = _genre_suggestion()
     defaults = PlaylistDefaults()
     candidates = load_candidates(ctx.conn, ctx.library_root, ctx.classification_source)
     custom_moods = list_custom_moods(ctx.conn)
     st.caption("1 条件を選ぶ → 2 曲を編集 → 3 保存（一覧・削除・Volumio への登録はプレイリスト管理画面）")
-    with st.expander("1. 選曲の条件", expanded=_RESULT_KEY not in st.session_state):
+    with st.expander("1. 選曲の条件", expanded=genre_applied or _RESULT_KEY not in st.session_state):
         request = _conditions_panel(defaults, ctx, candidates, custom_moods, on_manage)
 
     # 円で選ぶ場合は、条件の欄の中にマップを描く

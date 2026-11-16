@@ -58,6 +58,7 @@ class DashboardStats:
         failed: 同じ解析バージョンで解析に失敗し、その後ファイルが変わっていない曲数。
         unsupported: 音響解析に未対応の形式（M4A など）の曲数。
         genre_distribution: 選曲に使うジャンルごとの曲数。
+        pending_evaluations: 現在のライブラリの評価対象に含まれる、未評価の曲数。
     """
 
     total: int
@@ -69,6 +70,7 @@ class DashboardStats:
     error_count: int
     last_scan_at: str | None
     genre_distribution: dict[str, int]
+    pending_evaluations: int
 
 
 def effective_classifications(
@@ -197,4 +199,7 @@ def dashboard_stats(conn: sqlite3.Connection, library_root: str, source: Classif
         error_count=len(analysis_store.list_errors(conn, library_root)),
         last_scan_at=last_scan_at(conn, library_root),
         genre_distribution=dict(genres.most_common()),
+        pending_evaluations=sum(
+            1 for track_id, label in load_labels(conn).items() if track_id in track_ids and not label.is_evaluated
+        ),
     )

@@ -32,6 +32,15 @@ _TABLE_KEY = "manage_playlists"
 _LISTED_IDS_KEY = "manage_playlists_ids"
 _DELETED_NAMES_KEY = "manage_deleted_names"
 _NOT_REGISTERED = "未登録"
+_OPEN_PLAYLIST_KEY = "manage_open_playlist"
+
+
+def select_playlist(playlist_id: int | None) -> None:
+    """ダッシュボードから開くプレイリストを指定する。None は通常の一覧を開く。"""
+    if playlist_id is None:
+        st.session_state.pop(_OPEN_PLAYLIST_KEY, None)
+    else:
+        st.session_state[_OPEN_PLAYLIST_KEY] = playlist_id
 
 
 def render(ctx: PageContext) -> None:
@@ -55,6 +64,9 @@ def _playlists(ctx: PageContext) -> None:
         st.success(f"{''.join(f'「{name}」' for name in deleted_names)}を削除しました。")
 
     playlists = list_playlists(ctx.conn)
+    if _opened_playlist(ctx, playlists):
+        return
+
     if not playlists:
         st.caption("保存したプレイリストがありません。プレイリスト作成画面で作成・保存できます。")
         return
@@ -88,6 +100,23 @@ def _playlists(ctx: PageContext) -> None:
         _details(ctx, selected[0])
     else:
         st.caption("曲目と Volumio への登録は、プレイリストを 1 件だけ選ぶと表示します。")
+
+
+def _opened_playlist(ctx: PageContext, playlists: list[SavedPlaylist]) -> bool:
+    playlist_id = st.session_state.get(_OPEN_PLAYLIST_KEY)
+    if playlist_id is None:
+        return False
+
+    selected = next((playlist for playlist in playlists if playlist.id == playlist_id), None)
+    if selected is None:
+        select_playlist(None)
+        st.info("選んだプレイリストは削除されています。一覧から選び直してください。")
+        return False
+
+    st.button("一覧に戻る", on_click=select_playlist, args=(None,))
+    _details(ctx, selected)
+    _delete_form(ctx, [selected])
+    return True
 
 
 def _registration_summary(ctx: PageContext, playlist: SavedPlaylist) -> str:

@@ -299,6 +299,9 @@ def capture_pages(page: Page, base_url: str, output_dir: Path, suffix: str) -> N
         ("settings", "settings"),
     ):
         open_page(page, base_url, route)
+        if name == "dashboard":
+            check_dashboard_viewport(page)
+
         save_full_page(page, output_dir / f"{name}{suffix}.png")
 
     open_page(page, base_url, "playlist")
@@ -325,6 +328,16 @@ def capture_pages(page: Page, base_url: str, output_dir: Path, suffix: str) -> N
     open_page(page, base_url, "manage")
     expect(page.get_by_text("表の左端で選ぶと", exact=False)).to_be_visible()
     save_full_page(page, output_dir / f"manage{suffix}.png")
+    # 保存済みの項目があるホーム画面を記録し、その項目の詳細まで進めることも確認する。
+    open_page(page, base_url, "")
+    check_dashboard_viewport(page)
+    save_full_page(page, output_dir / f"dashboard{suffix}.png")
+    page.get_by_role("button", name=PLAYLIST_NAME, exact=True).first.click()
+    wait_for_app(page)
+    expect(page.get_by_role("heading", name=PLAYLIST_NAME, exact=True)).to_be_visible()
+    page.get_by_role("button", name="一覧に戻る", exact=True).click()
+    wait_for_app(page)
+    expect(page.get_by_text("表の左端で選ぶと", exact=False)).to_be_visible()
     if not suffix:
         open_page(page, base_url, "evaluation")
         page.get_by_role("tab", name="集計・CSV").click()
@@ -337,6 +350,22 @@ def capture_pages(page: Page, base_url: str, output_dir: Path, suffix: str) -> N
         page.get_by_text("高度な音響解析設定", exact=True).click()
         save_full_page(page, output_dir / "settings-advanced.png")
         check_settings_keyboard(page)
+
+
+def check_dashboard_viewport(page: Page) -> None:
+    """主要操作と解析概要が初期表示範囲に収まることを確認する。"""
+    viewport = page.viewport_size
+    if viewport is None:
+        raise RuntimeError("viewport is not set")
+
+    for element in (
+        page.get_by_role("button", name="プレイリストを作成", exact=True),
+        page.get_by_role("button", name="保存したプレイリストを見る", exact=True),
+        page.get_by_text("解析失敗 0 曲　／　解析未対応 0 曲", exact=True),
+    ):
+        bounds = element.bounding_box()
+        if bounds is None or bounds["y"] < 0 or bounds["y"] + bounds["height"] > viewport["height"]:
+            raise RuntimeError("dashboard action or summary is outside the initial viewport")
 
 
 def check_settings_keyboard(page: Page) -> None:
