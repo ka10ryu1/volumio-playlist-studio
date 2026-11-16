@@ -1,6 +1,8 @@
 """評価画面（分類結果の評価、プレイリストの満足度）のテスト。"""
 
 import sqlite3
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -149,6 +151,12 @@ def playable(app_db: sqlite3.Connection, tmp_path: Path) -> dict[str, int]:
     return ids
 
 
+_LOADING = "曲を読み込んでいます"
+# 曲の読み込みが終わるのを待つ上限（回数 × 間隔）
+_WAIT_TRIES = 200
+_WAIT_INTERVAL_SEC = 0.05
+
+
 def _open_track(track_id: int) -> AppTest:
     at = run_view("evaluation_page")
     next(s for s in at.selectbox if s.label == "曲").set_value(track_id).run()
@@ -156,16 +164,74 @@ def _open_track(track_id: int) -> AppTest:
     return at
 
 
+def _is_loading(at: AppTest) -> bool:
+    return any(_LOADING in c.value for c in at.caption)
+
+
+def _wait_loaded(at: AppTest) -> AppTest:
+    """バックグラウンドでの曲の読み込みが終わるまで、画面を再実行する。"""
+    for _ in range(_WAIT_TRIES):
+        if not _is_loading(at):
+            return at
+
+        time.sleep(_WAIT_INTERVAL_SEC)
+        at.run()
+        assert not at.exception
+
+    raise AssertionError("track did not finish loading")
+
+
 def test_evaluation_plays_selected_track(playable: dict[str, int]) -> None:
-    at = _open_track(playable["再生できる曲"])
+    at = _wait_loaded(_open_track(playable["再生できる曲"]))
 
     [player] = at.get("audio")
     assert player.proto.url
 
     # 曲を変えると、その曲が再生できない理由を表示する
-    at = _open_track(playable["消えた曲"])
+    at = _wait_loaded(_open_track(playable["消えた曲"]))
     assert not at.get("audio")
-    assert any("ファイルが見つからない" in c.value for c in at.caption)
+    assert any("ファイルが見つからない" in w.value for w in at.warning)
     at = _open_track(playable["未対応"])
     assert not at.get("audio")
     assert any("この形式の曲は再生できません" in c.value for c in at.caption)
+
+
+def test_slow_track_loading_does_not_block_evaluation(
+    app_db: sqlite3.Connection, playable: dict[str, int], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """ネットワーク上のライブラリなどで読み込みが遅くても、読み込み中に評価を入力・保存できる。"""
+    release = threading.Event()
+    read_bytes = Path.read_bytes
+
+    def slow_read_bytes(path: Path) -> bytes:
+        release.wait(timeout=30)
+        return read_bytes(path)
+
+    monkeypatch.setattr(Path, "read_bytes", slow_read_bytes)
+    track_id = playable["再生できる曲"]
+    at = _open_track(track_id)
+
+    assert _is_loading(at)
+    assert not at.get("audio")
+    next(r for r in at.radio if r.label == "ジャンルの判定は").set_value(Verdict.PENDING)
+    next(r for r in at.radio if r.label == "ムードの判定は").set_value(Verdict.PENDING)
+    click(at, "評価を保存")
+    assert load_labels(app_db)[track_id].is_evaluated
+
+    # 読み終わると、評価済みの曲を開き直したときにプレーヤーが表示される
+    release.set()
+    next(c for c in at.checkbox if c.label == "未評価の曲だけ表示").uncheck().run()
+    next(s for s in at.selectbox if s.label == "曲").set_value(track_id).run()
+    at = _wait_loaded(at)
+    assert len(at.get("audio")) == 1
+
+
+def test_unreadable_track_shows_reason(playable: dict[str, int], monkeypatch: pytest.MonkeyPatch) -> None:
+    def denied(path: Path) -> bytes:
+        raise PermissionError(13, "Permission denied", str(path))
+
+    monkeypatch.setattr(Path, "read_bytes", denied)
+    at = _wait_loaded(_open_track(playable["再生できる曲"]))
+
+    assert not at.get("audio")
+    assert any("曲のファイルを読めない" in w.value for w in at.warning)

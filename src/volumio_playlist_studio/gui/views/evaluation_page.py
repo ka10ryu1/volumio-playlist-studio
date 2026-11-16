@@ -14,6 +14,7 @@ from volumio_playlist_studio.evaluation import (
     playlist_feedback_metrics,
     select_evaluation_sample,
 )
+from volumio_playlist_studio.gui.audio_player import track_player
 from volumio_playlist_studio.gui.context import PageContext
 from volumio_playlist_studio.gui.widgets import (
     classification_details,
@@ -21,7 +22,6 @@ from volumio_playlist_studio.gui.widgets import (
     mood_label,
     page_title,
     track_label,
-    track_player,
 )
 from volumio_playlist_studio.models import ATTRIBUTE_LABELS, Attribute, Genre, Mood, Track
 from volumio_playlist_studio.playlist import CREATION_METHOD_LABELS, CreationMethod
