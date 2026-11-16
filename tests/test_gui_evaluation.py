@@ -23,6 +23,10 @@ def test_evaluation_flow(demo: sqlite3.Connection) -> None:
     # 正しいムードの候補は、分類結果に現れるムードだけ（プレイリスト専用の雰囲気は含めない）
     mood_options = next(s for s in at.selectbox if s.label == "誤りの場合、正しいムード").options
     assert mood_options == ["リラックス", "集中・作業", "元気", "穏やかな夜"]
+    # 属性の評価は任意のため、折りたたんである
+    ratings = next(e for e in at.expander if e.label.startswith("属性の評価"))
+    assert ratings.label == "属性の評価（任意。入力済み 0 / 7）"
+    assert not ratings.proto.expanded
     next(s for s in at.select_slider if s.label == "リラックス度").set_value(4)
     click(at, "評価を保存")
     labels = [lb for lb in load_labels(demo).values() if lb.is_evaluated]
@@ -78,6 +82,7 @@ def test_reopened_evaluation_keeps_saved_labels(demo: sqlite3.Connection) -> Non
     assert next(s for s in at.select_slider if s.label == "リラックス度").value == 5
     assert next(s for s in at.select_slider if s.label == "エネルギー感").value == 1
     assert next(s for s in at.select_slider if s.label == "明るさ").value == "-"
+    assert any(e.label == "属性の評価（任意。入力済み 2 / 7）" for e in at.expander)
 
     # メモだけを変えて保存しても、人手の正解は変わらない
     next(t for t in at.text_input if t.label == "メモ").input("メモだけ追記")
