@@ -73,6 +73,7 @@ _INPUT_KEYS = (
     "pl_genre_mode",
     "pl_genres",
     "pl_children",
+    "pl_min_track_sec",
     "pl_novelty",
     "pl_randomness",
     "pl_artist",
@@ -96,6 +97,7 @@ class _Options:
     genre_mode: GenreMode
     genres: tuple[Genre, ...]
     children_mode: ChildrenMode
+    min_track_sec: int
     novelty: float
     randomness: float
     avoid_same_artist: bool
@@ -210,6 +212,7 @@ def _conditions_panel(
         # 半径は画面の表示（0〜10）に合わせた値で持つ
         "pl_radius": defaults.default_circle_radius * DISPLAY_SCALE,
         "pl_children": ChildrenMode.EXCLUDE,
+        "pl_min_track_sec": 0,
         "pl_novelty": 0.3,
         "pl_randomness": 0.3,
         "pl_artist": True,
@@ -237,7 +240,7 @@ def _mood_conditions(defaults: PlaylistDefaults, ctx: PageContext) -> PlaylistRe
     by_count = st.radio("長さの指定", ["再生時間", "曲数"], horizontal=True, key="pl_length") == "曲数"
     duration, count = _length_inputs(defaults)
     st.caption("「長さの指定」で選んだ方の値を使います。")
-    options = _detail_options(ctx, ranking="適合度順", preference_note=None)
+    options = _detail_options(defaults, ctx, ranking="適合度順", preference_note=None)
     if not _generate_button():
         return None
 
@@ -255,6 +258,7 @@ def _mood_conditions(defaults: PlaylistDefaults, ctx: PageContext) -> PlaylistRe
         genre_mode=options.genre_mode,
         genres=options.genres,
         children_mode=options.children_mode,
+        min_track_sec=options.min_track_sec,
         novelty=options.novelty,
         randomness=options.randomness,
         avoid_same_artist=options.avoid_same_artist,
@@ -308,7 +312,10 @@ def _circle_conditions(
     duration, count = _length_inputs(defaults)
     st.caption("上限を付けると、円の中の曲から中心に近い順に、上限を超えない範囲で選びます。")
     options = _detail_options(
-        ctx, ranking="中心に近い順", preference_note=None if cap != _CAP_NONE else "上限を付けたときだけ使います。"
+        defaults,
+        ctx,
+        ranking="中心に近い順",
+        preference_note=None if cap != _CAP_NONE else "上限を付けたときだけ使います。",
     )
     request = None
     if center is not None and (options.genre_mode == GenreMode.ALL or options.genres):
@@ -320,6 +327,7 @@ def _circle_conditions(
             genre_mode=options.genre_mode,
             genres=options.genres,
             children_mode=options.children_mode,
+            min_track_sec=options.min_track_sec,
             novelty=options.novelty,
             randomness=options.randomness,
             avoid_same_artist=options.avoid_same_artist,
@@ -384,10 +392,13 @@ def _length_inputs(defaults: PlaylistDefaults) -> tuple[int, int]:
     return int(duration), int(count)
 
 
-def _detail_options(ctx: PageContext, *, ranking: str, preference_note: str | None) -> _Options:
+def _detail_options(
+    defaults: PlaylistDefaults, ctx: PageContext, *, ranking: str, preference_note: str | None
+) -> _Options:
     """詳細設定の欄。
 
     Args:
+        defaults: 生成の既定値と制約。
         ctx: 画面の共通情報。
         ranking: ランダム性が 0 のときの選曲の順（例: 適合度順）。ランダム性の説明に使う。
         preference_note: 意外性・ランダム性を使わない場合に、入力欄を無効にして表示する説明。使う場合は None。
@@ -429,6 +440,14 @@ def _detail_options(ctx: PageContext, *, ranking: str, preference_note: str | No
                 "未判定の曲は子供向けではないものとして扱います。"
             ),
         )
+        min_track_sec = st.number_input(
+            "短い曲を除外（この秒数より短い曲を選ばない。0 なら除外しない）",
+            min_value=0,
+            max_value=defaults.max_min_track_sec,
+            step=10,
+            key="pl_min_track_sec",
+            help="ジングルや効果音などの短い曲を外すときに使います。再生時間が不明な曲も除外します。",
+        )
         # 使わない場合も入力欄は残し、無効にする。表示しないと Streamlit が入力済みの値を破棄するため
         disabled = preference_note is not None
         novelty = st.slider(
@@ -454,6 +473,7 @@ def _detail_options(ctx: PageContext, *, ranking: str, preference_note: str | No
         genre_mode=genre_mode or GenreMode.ALL,
         genres=tuple(genres),
         children_mode=children_mode or ChildrenMode.EXCLUDE,
+        min_track_sec=int(min_track_sec),
         novelty=novelty,
         randomness=randomness,
         avoid_same_artist=avoid_same_artist,
