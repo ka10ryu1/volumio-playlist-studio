@@ -18,6 +18,7 @@ from volumio_playlist_studio.models import (
 from volumio_playlist_studio.sample_data import load_demo_library
 from volumio_playlist_studio.storage import settings_store
 from volumio_playlist_studio.storage.database import transaction
+from volumio_playlist_studio.volumio_rest import web_url
 
 _SECONDS_PER_MINUTE = 60
 
@@ -100,6 +101,22 @@ def classification_details(result: ClassificationResult | None) -> None:
     st.caption("確信度は AI の回答への確かさで、正解率ではありません。ルールベースでは対象外です。")
     for note in result.notes:
         st.caption(f"・{note}")
+
+
+def volumio_link_button(host: str | None) -> None:
+    """Volumio の画面を新しいタブで開くボタンを表示する。接続先が未設定か形式が不正なら表示しない。
+
+    形式の誤りは、設定画面の保存時や Volumio との通信時に知らせるため、ここでは通知しない。
+    """
+    if host is None:
+        return
+
+    try:
+        url = web_url(host)
+    except ValueError:
+        return
+
+    st.link_button("Volumio を開く", url, icon=":material/open_in_new:", width="stretch")
 
 
 def music_folder_form(ctx: PageContext) -> None:

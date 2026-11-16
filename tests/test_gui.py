@@ -143,6 +143,29 @@ def test_sidebar_links_to_github_issues() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("host", "expected"),
+    [
+        ("192.168.1.22:3000", [("Volumio を開く", "http://192.168.1.22:3000/")]),
+        # 形式が不正な接続先では、別の URL を開かないようボタンを出さない
+        ("http://volumio.local/api", []),
+    ],
+)
+def test_sidebar_links_to_volumio(demo: sqlite3.Connection, host: str, expected: list[tuple[str, str]]) -> None:
+    with transaction(demo):
+        settings_store.set_value(demo, settings_store.VOLUMIO_HOST_KEY, host)
+
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT)
+    at.run()
+
+    assert not at.exception
+    links = [e.proto for e in at.sidebar.get("link_button")]
+    assert [(link.label, link.url) for link in links] == [
+        ("問い合わせ（GitHub）", "https://github.com/ka10ryu1/volumio-playlist-studio/issues"),
+        *expected,
+    ]
+
+
 def test_dashboard_navigates_to_playlist(demo: sqlite3.Connection) -> None:
     at = AppTest.from_file(APP, default_timeout=TIMEOUT).run()
     click(at, "プレイリストを作成")

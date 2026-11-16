@@ -73,6 +73,8 @@ def test_volumio_panel_previews_against_real_library(demo: sqlite3.Connection, f
 
     next(r for r in at.radio if r.label == "照合先").set_value("モック（模擬）").run()
     assert any(b.label == "Volumio に登録" for b in at.button)
+    # 実機に登録していないため、Volumio を開くボタンは出さない
+    assert not at.get("link_button")
 
 
 def test_volumio_panel_registers_to_real_device(demo: sqlite3.Connection) -> None:
@@ -91,6 +93,8 @@ def test_volumio_panel_registers_to_real_device(demo: sqlite3.Connection) -> Non
     register = next(b for b in at.button if b.label == "Volumio に登録")
     assert register.disabled  # 確認のチェックを入れるまで登録できない
     assert not any(p.startswith("42") for p in fake.received)
+    # 登録するまでは、Volumio を開くボタンを出さない
+    assert not at.get("link_button")
 
     next(c for c in at.checkbox if c.label.startswith("この内容で")).check().run()
     click(at, "Volumio に登録")
@@ -100,6 +104,7 @@ def test_volumio_panel_registers_to_real_device(demo: sqlite3.Connection) -> Non
     [record] = list_registrations(demo, saved.id)
     assert (record.status, record.client_kind) == ("success", "websocket")
     assert any("夜の曲" in c.value and "websocket" in c.value for c in at.caption)
+    assert [(e.proto.label, e.proto.url) for e in at.get("link_button")] == [("Volumio を開く", f"http://{fake.host}/")]
 
     # 既存の名前では登録せず、既存のプレイリストを変更しない
     at.text_input(key=f"volumio-name-real-{saved.id}").input("既存").run()

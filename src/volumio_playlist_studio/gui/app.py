@@ -16,6 +16,7 @@ from volumio_playlist_studio.gui.views import (
     playlist_page,
     settings_page,
 )
+from volumio_playlist_studio.gui.widgets import volumio_link_button
 from volumio_playlist_studio.models import Genre
 
 
@@ -76,7 +77,10 @@ def main() -> None:
             pages.append(st.Page(lambda: render_lan_page(lan, port), title="スマホで開く", icon="📱", url_path="lan"))
 
         navigation = st.navigation(pages)
-        st.sidebar.link_button("問い合わせ（GitHub）", ISSUES_URL, icon=":material/help:", width="stretch")
+        with st.sidebar:
+            st.link_button("問い合わせ（GitHub）", ISSUES_URL, icon=":material/help:", width="stretch")
+            volumio_link_button(ctx.volumio_host)
+
         with st.container(key="job-notifications"):
             show_job_message()
             show_jobs()

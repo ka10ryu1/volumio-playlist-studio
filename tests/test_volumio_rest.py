@@ -17,7 +17,7 @@ import pytest
 from volumio_playlist_studio.jobs import JobControl
 from volumio_playlist_studio.storage.volumio_library import last_collected_at, load_uris
 from volumio_playlist_studio.volumio import BrowseItem, VolumioError, collect_track_uris
-from volumio_playlist_studio.volumio_rest import VolumioRestClient, parse_host
+from volumio_playlist_studio.volumio_rest import VolumioRestClient, parse_host, web_url
 from volumio_playlist_studio.workflows import run_volumio_sync
 
 # 模擬するライブラリ。フォルダの URI ごとの直下の項目
@@ -133,6 +133,24 @@ def test_parse_host_rejects_anything_but_host_and_port(text: str) -> None:
     # パスや認証情報を混ぜて、別の URL に接続させないようにする
     with pytest.raises(ValueError, match="invalid"):
         parse_host(text)
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("volumio.local", "http://volumio.local/"),
+        (" 192.168.1.22:3000 ", "http://192.168.1.22:3000/"),
+        ("volumio.local:80", "http://volumio.local/"),
+    ],
+)
+def test_web_url(text: str, expected: str) -> None:
+    assert web_url(text) == expected
+
+
+@pytest.mark.parametrize("text", ["", "http://volumio.local", "volumio.local/api", "user@volumio.local"])
+def test_web_url_rejects_anything_but_host_and_port(text: str) -> None:
+    with pytest.raises(ValueError, match="invalid"):
+        web_url(text)
 
 
 def test_list_playlists(volumio: FakeVolumio) -> None:
