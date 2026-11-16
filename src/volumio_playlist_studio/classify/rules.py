@@ -8,7 +8,7 @@
 from dataclasses import dataclass, field
 
 from volumio_playlist_studio.classify.base import decide_mood
-from volumio_playlist_studio.classify.genre_tags import genre_from_tag
+from volumio_playlist_studio.classify.genre_tags import genre_from_album, genre_from_tag
 from volumio_playlist_studio.config import RULE_VERSION, MoodDecision, RuleParameters
 from volumio_playlist_studio.models import (
     Attribute,
@@ -57,11 +57,15 @@ class RuleClassifier:
         return RULE_VERSION
 
     def classify(self, track: Track, features: AudioFeatures | None) -> ClassificationResult:
-        """タグからジャンルを、音響特徴量から属性スコアを求める。"""
+        """タグ（またはアルバム名）からジャンルを、音響特徴量から属性スコアを求める。"""
         notes: list[str] = []
         genre = genre_from_tag(track.genre)
         if genre is None:
-            notes.append("ジャンルタグがないか、候補に当てはまらないためジャンルは不明")
+            genre = genre_from_album(track.album)
+            if genre is None:
+                notes.append("ジャンルタグがないか、候補に当てはまらないためジャンルは不明")
+            else:
+                notes.append("ジャンルタグで決まらないため、アルバム名からジャンルを判定")
 
         if features is None:
             attributes = {attr: AttributeScore(value=None) for attr in Attribute}
