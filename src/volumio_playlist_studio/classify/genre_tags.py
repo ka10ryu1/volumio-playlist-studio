@@ -5,6 +5,9 @@
 国・言語・地域（邦楽、洋楽、Japanese、East Asia）、聴く場面や対象（クリスマス、子供向け、フィットネス）、編成や形式
 （Instrumental、Vocal、Ballad）、音楽ではないもの（Comedy、Spoken Word）はジャンルを表さないため、
 推測で当てはめず不明とする。照合の規則を変えた場合は `config.RULE_VERSION` を更新する。
+
+タグで決まらない曲は、アルバム名がサウンドトラックであることを明示している場合だけサウンドトラックとする
+（`genre_from_album`）。ゲームや映画のサウンドトラックは、タグが「Miscellaneous」などで不明になりやすいため。
 """
 
 import re
@@ -336,5 +339,38 @@ def genre_from_tag(tag: str | None) -> Genre | None:
     for genre, pattern in _GENRE_PATTERNS:
         if pattern.search(tag):
             return genre
+
+    return None
+
+
+# アルバム名はタグよりも自由な表記のため、タグの照合（「game」「movie」など）は使わず、サウンドトラックの
+# アルバムであることを明示する語に限る。「Original Sound Version」はゲームのサウンドトラックで使われる表記
+_SOUNDTRACK_ALBUM_PATTERN = re.compile(
+    "|".join(
+        [
+            r"sound\s?track",
+            r"original\s?sound\s?version",
+            r"original\s?score",
+            r"\bO\.?S\.?T\b",
+            "サウンド[・\\s]?トラック",
+            "サントラ",
+            "劇伴",
+        ]
+    ),
+    re.IGNORECASE,
+)
+
+
+def genre_from_album(album: str | None) -> Genre | None:
+    """アルバム名からジャンルを推定する。
+
+    サウンドトラックであることを明示したアルバム名だけを対象にし、それ以外は None（不明）を返す。
+    タグのジャンル表記で決まらない場合の補助として使う。
+    """
+    if album is None or not album.strip():
+        return None
+
+    if _SOUNDTRACK_ALBUM_PATTERN.search(album):
+        return Genre.SOUNDTRACK
 
     return None

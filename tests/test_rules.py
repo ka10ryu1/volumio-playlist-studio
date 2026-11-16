@@ -6,7 +6,7 @@ from hypothesis import given
 from hypothesis import strategies as st
 
 from volumio_playlist_studio.classify.base import decide_mood, mood_scores
-from volumio_playlist_studio.classify.genre_tags import genre_from_tag
+from volumio_playlist_studio.classify.genre_tags import genre_from_album, genre_from_tag
 from volumio_playlist_studio.classify.rules import RuleClassifier, normalize
 from volumio_playlist_studio.config import RULE_VERSION, MoodDecision
 from volumio_playlist_studio.models import (
@@ -135,6 +135,38 @@ def test_genre_from_tag(tag: str | None, expected: Genre | None) -> None:
     assert genre_from_tag(tag) == expected
 
 
+@pytest.mark.parametrize(
+    ("album", "expected"),
+    [
+        ("架空の映画 オリジナル・サウンドトラック", Genre.SOUNDTRACK),
+        ("架空のゲーム サウンドトラック [Disc 2]", Genre.SOUNDTRACK),
+        ("架空のアニメ サウンド・トラック", Genre.SOUNDTRACK),
+        ("架空のドラマ サントラ", Genre.SOUNDTRACK),
+        ("架空のドラマ 劇伴集", Genre.SOUNDTRACK),
+        ("Imaginary Film Original Soundtrack", Genre.SOUNDTRACK),
+        ("Imaginary Film Sound Track", Genre.SOUNDTRACK),
+        ("IMAGINARY GAME ORIGINAL SOUND VERSION [Disc 1]", Genre.SOUNDTRACK),
+        ("Imaginary Film (Original Score)", Genre.SOUNDTRACK),
+        ("Imaginary Anime OST", Genre.SOUNDTRACK),
+        ("Imaginary Anime O.S.T.", Genre.SOUNDTRACK),
+        # タグでは手がかりにする語でも、アルバム名ではサウンドトラックと限らない
+        ("Game Over", None),
+        ("Movie Star", None),
+        ("Final Score", None),
+        ("アニメが好き", None),
+        # 「OST」を単語の一部として誤検出しない
+        ("Lost and Found", None),
+        ("Ghost Stories", None),
+        ("架空のアルバム", None),
+        ("", None),
+        ("   ", None),
+        (None, None),
+    ],
+)
+def test_genre_from_album(album: str | None, expected: Genre | None) -> None:
+    assert genre_from_album(album) == expected
+
+
 @pytest.mark.parametrize(("value", "expected"), [(0.0, 0.0), (5.0, 0.5), (10.0, 1.0), (-3.0, 0.0), (99.0, 1.0)])
 def test_normalize(value: float, expected: float) -> None:
     assert normalize(value, (0.0, 10.0)) == expected
@@ -161,6 +193,28 @@ def test_unknown_genre_tag_is_left_unknown(make_track: TrackFactory) -> None:
 
     assert result.genre is None
     assert any("ジャンル" in note for note in result.notes)
+
+
+@pytest.mark.parametrize("tag", [None, "Miscellaneous"])
+def test_soundtrack_album_fills_unknown_genre_tag(make_track: TrackFactory, tag: str | None) -> None:
+    result = RuleClassifier().classify(make_track(genre=tag, album="架空のゲーム オリジナル・サウンドトラック"), CALM)
+
+    assert result.genre == Genre.SOUNDTRACK
+    assert any("アルバム名" in note for note in result.notes)
+
+
+def test_genre_tag_takes_precedence_over_album_name(make_track: TrackFactory) -> None:
+    result = RuleClassifier().classify(make_track(genre="J-Pop", album="架空の映画 オリジナル・サウンドトラック"), CALM)
+
+    assert result.genre == Genre.POP
+    assert not any("アルバム名" in note for note in result.notes)
+
+
+def test_unknown_tag_and_ordinary_album_stay_unknown(make_track: TrackFactory) -> None:
+    result = RuleClassifier().classify(make_track(genre="Miscellaneous", album="Game Over"), CALM)
+
+    assert result.genre is None
+    assert any("ジャンルは不明" in note for note in result.notes)
 
 
 def test_calm_and_intense_tracks_are_ordered_as_expected(make_track: TrackFactory) -> None:
