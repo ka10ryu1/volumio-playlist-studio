@@ -187,16 +187,18 @@ def _label_form(ctx: PageContext, label: EvaluationLabel, stored: StoredClassifi
             filter_mode=None,
         )
 
-        st.markdown("属性の評価（評価しない属性は「-」のまま）")
+        # 属性の評価は任意で、項目が多く保存ボタンまでのスクロールが長くなるため、折りたたんでおく
         ratings: dict[Attribute, int] = {}
-        for attribute in Attribute:
-            value = st.select_slider(
-                ATTRIBUTE_LABELS[attribute],
-                options=["-", *range(RATING_MIN, RATING_MAX + 1)],
-                value=label.ratings.get(attribute, "-"),
-            )
-            if isinstance(value, int):
-                ratings[attribute] = value
+        with st.expander(f"属性の評価（任意。入力済み {len(label.ratings)} / {len(Attribute)}）"):
+            st.caption("評価しない属性は「-」のままにします。")
+            for attribute in Attribute:
+                value = st.select_slider(
+                    ATTRIBUTE_LABELS[attribute],
+                    options=["-", *range(RATING_MIN, RATING_MAX + 1)],
+                    value=label.ratings.get(attribute, "-"),
+                )
+                if isinstance(value, int):
+                    ratings[attribute] = value
 
         note = st.text_input("メモ", value=label.note or "")
         submitted = st.form_submit_button("評価を保存", type="primary")
