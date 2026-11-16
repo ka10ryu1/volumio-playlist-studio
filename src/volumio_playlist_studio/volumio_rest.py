@@ -49,6 +49,19 @@ def parse_host(text: str) -> tuple[str, int]:
     return match.group("host"), port
 
 
+def web_url(text: str) -> str:
+    """設定された Volumio の接続先から、ブラウザで開く Volumio の画面の URL を作る。
+
+    Args:
+        text: `volumio.local` や `192.168.1.22:3000` の形式の文字列。
+
+    Raises:
+        ValueError: 形式が不正な場合。
+    """
+    host, port = parse_host(text)
+    return f"http://{host}/" if port == _DEFAULT_PORT else f"http://{host}:{port}/"
+
+
 class VolumioRestClient:
     """Volumio の REST API による読み取り専用のクライアント。"""
 

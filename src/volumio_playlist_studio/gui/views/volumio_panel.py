@@ -9,7 +9,7 @@
 import streamlit as st
 
 from volumio_playlist_studio.gui.context import PageContext, running_job, start_job
-from volumio_playlist_studio.gui.widgets import track_label
+from volumio_playlist_studio.gui.widgets import track_label, volumio_link_button
 from volumio_playlist_studio.models import Track
 from volumio_playlist_studio.storage.database import transaction, utc_now
 from volumio_playlist_studio.storage.playlists import (
@@ -71,6 +71,11 @@ def render(ctx: PageContext, playlist: SavedPlaylist) -> None:
         _mock_preview_and_register(ctx, playlist, tracks)
 
     _history(ctx, playlist)
+    # 実機に登録できたら、作成したプレイリストを Volumio の画面で確かめられるようにする
+    if source == _SOURCE_REAL and any(
+        r.client_kind != "mock" and r.status == "success" for r in list_registrations(ctx.conn, playlist.id)
+    ):
+        volumio_link_button(host)
 
 
 def _real_preview_and_register(ctx: PageContext, host: str, playlist: SavedPlaylist, tracks: list[Track]) -> None:
