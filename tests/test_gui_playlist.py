@@ -4,12 +4,15 @@ import sqlite3
 
 from test_gui import click, run_view
 
+from volumio_playlist_studio.config import PlaylistDefaults
 from volumio_playlist_studio.models import (
     Genre,
     Mood,
 )
 from volumio_playlist_studio.playlist import ChildrenMode, GenreMode
 from volumio_playlist_studio.storage.playlists import list_playlists
+
+DEFAULTS = PlaylistDefaults()
 
 
 def test_playlist_excludes_children_by_default_and_can_select_only_children(demo: sqlite3.Connection) -> None:
@@ -22,6 +25,18 @@ def test_playlist_excludes_children_by_default_and_can_select_only_children(demo
     click(at, "プレイリストを生成")
 
     assert any("子供向けの条件に合わない" in w.value and "Jev で判定" in w.value for w in at.warning)
+
+
+def test_playlist_excludes_short_tracks_only_when_requested(demo: sqlite3.Connection) -> None:
+    at = run_view("playlist_page")
+    min_track_sec = next(n for n in at.number_input if n.key == "pl_min_track_sec")
+    assert min_track_sec.value == 0
+
+    # サンプルデータの曲はすべて 150 秒以上のため、それより長い秒数を指定すると短い曲として除外される
+    min_track_sec.set_value(DEFAULTS.max_min_track_sec)
+    click(at, "プレイリストを生成")
+
+    assert any("再生時間が短い" in w.value and "短い曲の秒数を下げる" in w.value for w in at.warning)
 
 
 def test_playlist_generation_edit_and_save(demo: sqlite3.Connection) -> None:

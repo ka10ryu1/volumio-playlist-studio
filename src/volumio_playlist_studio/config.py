@@ -178,6 +178,8 @@ class PlaylistDefaults:
     # 「条件を緩和して再生成」を選んだときの適合度の閾値
     relaxed_suitability_threshold: float = 0.4
     max_track_count: int = 200
+    # 短い曲を除外するときに指定できる最短の再生時間（秒）の上限
+    max_min_track_sec: int = 600
     # 雰囲気マップの円で選ぶときの半径（マップは縦横とも 0〜1）。Jev の属性値は 0.25 刻みの 5 段階を基本とするため、
     # 既定値は隣の段階まで含む大きさにする
     min_circle_radius: float = 0.05

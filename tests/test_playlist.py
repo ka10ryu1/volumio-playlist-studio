@@ -23,6 +23,7 @@ from volumio_playlist_studio.playlist import (
     REASON_DUPLICATE,
     REASON_GENRE,
     REASON_NO_DURATION,
+    REASON_TOO_SHORT,
     REASON_UNCLASSIFIED,
     REASON_UNSUITABLE,
     Candidate,
@@ -170,6 +171,42 @@ def test_shortfall_is_explained_without_relaxing_conditions(
     assert any("全ジャンル" in s for s in result.shortfall.suggestions)
     assert any("緩和" in s for s in result.shortfall.suggestions)
     assert any("解析" in s for s in result.shortfall.suggestions)
+
+
+@pytest.mark.parametrize(("duration_min", "track_count"), [(30, None), (None, 10)])
+def test_short_tracks_and_tracks_without_duration_are_excluded_when_requested(
+    make_track: TrackFactory,
+    make_classification: ClassificationFactory,
+    duration_min: int | None,
+    track_count: int | None,
+) -> None:
+    relaxing = make_classification(relaxation=0.9, energy=0.2, calmness=0.9)
+    short = Candidate(make_track(duration_sec=59.9), relaxing, Genre.JAZZ)
+    exactly_min = Candidate(make_track(duration_sec=60.0), relaxing, Genre.JAZZ)
+    long = Candidate(make_track(duration_sec=300.0), relaxing, Genre.JAZZ)
+    unknown = Candidate(make_track(duration_sec=None), relaxing, Genre.JAZZ)
+    request = PlaylistRequest(Mood.RELAX, duration_min=duration_min, track_count=track_count, min_track_sec=60)
+
+    result = generate_playlist([short, exactly_min, long, unknown], request, DEFAULTS)
+
+    # 指定した秒数ちょうどの曲は短い曲として扱わない
+    assert {t.track.id for t in result.tracks} == {exactly_min.track.id, long.track.id}
+    assert result.shortfall is not None
+    assert result.shortfall.excluded == {REASON_TOO_SHORT: 1, REASON_NO_DURATION: 1}
+    assert any("短い曲の秒数を下げる" in s for s in result.shortfall.suggestions)
+
+
+def test_short_tracks_are_kept_by_default(make_track: TrackFactory, make_classification: ClassificationFactory) -> None:
+    relaxing = make_classification(relaxation=0.9, energy=0.2, calmness=0.9)
+    short = Candidate(make_track(duration_sec=10.0), relaxing, Genre.JAZZ)
+    unknown = Candidate(make_track(duration_sec=None), relaxing, Genre.JAZZ)
+
+    result = generate_playlist(
+        [short, unknown], PlaylistRequest(Mood.RELAX, duration_min=None, track_count=2), DEFAULTS
+    )
+
+    assert {t.track.id for t in result.tracks} == {short.track.id, unknown.track.id}
+    assert result.shortfall is None
 
 
 def test_relaxed_request_accepts_less_suitable_tracks(
@@ -354,6 +391,8 @@ def test_suitability_of_unclassified_track_is_none() -> None:
         {"genre_mode": GenreMode.ONLY, "genres": ()},
         {"novelty": 1.5},
         {"randomness": -0.1},
+        {"min_track_sec": -1},
+        {"min_track_sec": DEFAULTS.max_min_track_sec + 1},
     ],
 )
 def test_invalid_requests_are_rejected(request_kwargs: dict[str, Any]) -> None:
@@ -369,6 +408,7 @@ def test_request_to_dict_is_json_friendly() -> None:
     assert data["mood"] == "focus"
     assert data["genre_mode"] == "only"
     assert data["genres"] == ["jazz"]
+    assert data["min_track_sec"] == 0
 
 
 def test_novelty_prefers_tracks_never_used_before(
@@ -447,11 +487,14 @@ def random_candidates(draw: st.DrawFn) -> list[Candidate]:
     duration=st.integers(min_value=30, max_value=180),
     seed=st.integers(min_value=0, max_value=1000),
     randomness=st.floats(min_value=0, max_value=1),
+    min_track_sec=st.one_of(st.just(0), st.integers(min_value=1, max_value=DEFAULTS.max_min_track_sec)),
 )
 def test_generated_playlist_invariants(
-    candidates: list[Candidate], duration: int, seed: int, randomness: float
+    candidates: list[Candidate], duration: int, seed: int, randomness: float, min_track_sec: int
 ) -> None:
-    request = PlaylistRequest(Mood.RELAX, duration_min=duration, seed=seed, randomness=randomness)
+    request = PlaylistRequest(
+        Mood.RELAX, duration_min=duration, seed=seed, randomness=randomness, min_track_sec=min_track_sec
+    )
 
     result = generate_playlist(candidates, request, DEFAULTS)
 
@@ -461,6 +504,8 @@ def test_generated_playlist_invariants(
     for item in result.tracks:
         assert item.score is not None
         assert item.score >= DEFAULTS.suitability_threshold
+        assert item.track.duration_sec is not None
+        assert item.track.duration_sec >= min_track_sec
 
     if result.shortfall is None:
         assert result.total_duration_sec >= (duration - DEFAULTS.duration_tolerance_min) * 60

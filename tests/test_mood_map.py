@@ -189,6 +189,17 @@ def test_track_without_duration_is_selected_when_cap_is_not_by_duration(place: P
     assert [t.track.id for t in result.tracks] == [unknown_duration.track.id]
 
 
+def test_circle_excludes_short_tracks_and_tracks_without_duration_when_requested(place: Placer) -> None:
+    short = place(0.0, 0.0, duration_sec=30.0)
+    exactly_min = place(0.01, 0.0, duration_sec=90.0)
+    unknown = place(0.02, 0.0, duration_sec=None)
+    request = CircleRequest(Mood.RELAX, radius=0.25, min_track_sec=90)
+
+    result = generate_circle_playlist([short, exactly_min, unknown], request, DEFAULTS)
+
+    assert [t.track.id for t in result.tracks] == [exactly_min.track.id]
+
+
 def test_circle_applies_genre_filter_and_removes_duplicates(place: Placer) -> None:
     jazz = place(0.0, 0.0, genre=Genre.JAZZ, title="同じ曲", artist="同じ人")
     jazz_duplicate = place(0.05, 0.0, genre=Genre.JAZZ, title="同じ曲", artist="同じ人")
@@ -259,6 +270,8 @@ def ids_in_order(candidates: list[Candidate]) -> list[int]:
         (CircleRequest(Mood.RELAX, radius=0.25, track_count=0), "track_count"),
         (CircleRequest(Mood.RELAX, radius=0.25, genre_mode=GenreMode.ONLY), "genres"),
         (CircleRequest(Mood.RELAX, radius=0.25, novelty=1.5), "novelty"),
+        (CircleRequest(Mood.RELAX, radius=0.25, min_track_sec=-1), "min_track_sec"),
+        (CircleRequest(Mood.RELAX, radius=0.25, min_track_sec=DEFAULTS.max_min_track_sec + 1), "min_track_sec"),
     ],
 )
 def test_invalid_circle_request_is_rejected(request_: CircleRequest, message: str) -> None:
@@ -348,6 +361,7 @@ def circle_requests(draw: st.DrawFn) -> CircleRequest:
         track_count=draw(st.integers(1, 20)) if cap == "count" else None,
         seed=draw(st.integers(min_value=0, max_value=1000)),
         randomness=draw(st.floats(min_value=0, max_value=1)),
+        min_track_sec=draw(st.one_of(st.just(0), st.integers(min_value=1, max_value=DEFAULTS.max_min_track_sec))),
     )
 
 
@@ -367,6 +381,9 @@ def test_circle_playlist_invariants(candidates: list[Candidate], circle: CircleR
         assert math.hypot(point.x - center.x, point.y - center.y) <= radius + 1e-6
         assert item.score is not None
         assert 0.0 <= item.score <= 1.0
+        if circle.min_track_sec:
+            assert item.track.duration_sec is not None
+            assert item.track.duration_sec >= circle.min_track_sec
 
     if circle.duration_min is not None:
         assert result.total_duration_sec <= circle.duration_min * 60
@@ -379,6 +396,7 @@ def test_circle_playlist_invariants(candidates: list[Candidate], circle: CircleR
         inside = [
             c for c in candidates
             if (p := track_point(c)) is not None and math.hypot(p.x - center.x, p.y - center.y) < radius - 1e-6
+            and (not circle.min_track_sec or (c.track.duration_sec or 0.0) >= circle.min_track_sec)
         ]  # fmt: skip
         assert ids(inside) <= set(chosen)
 
