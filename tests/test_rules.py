@@ -149,6 +149,10 @@ def test_genre_from_tag(tag: str | None, expected: Genre | None) -> None:
         ("Imaginary Film (Original Score)", Genre.SOUNDTRACK),
         ("Imaginary Anime OST", Genre.SOUNDTRACK),
         ("Imaginary Anime O.S.T.", Genre.SOUNDTRACK),
+        # 日本語に続けて書いた「OST」も検出する
+        ("架空のゲームOST", Genre.SOUNDTRACK),
+        ("架空の映画 OST集", Genre.SOUNDTRACK),
+        ("「架空のアニメ」OST", Genre.SOUNDTRACK),
         # タグでは手がかりにする語でも、アルバム名ではサウンドトラックと限らない
         ("Game Over", None),
         ("Movie Star", None),
@@ -157,6 +161,7 @@ def test_genre_from_tag(tag: str | None, expected: Genre | None) -> None:
         # 「OST」を単語の一部として誤検出しない
         ("Lost and Found", None),
         ("Ghost Stories", None),
+        ("Ostrich", None),
         ("架空のアルバム", None),
         ("", None),
         ("   ", None),

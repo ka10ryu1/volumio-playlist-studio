@@ -351,7 +351,9 @@ _SOUNDTRACK_ALBUM_PATTERN = re.compile(
             r"sound\s?track",
             r"original\s?sound\s?version",
             r"original\s?score",
-            r"\bO\.?S\.?T\b",
+            # \b は日本語の文字も単語の一部とみなし「架空のゲームOST」を検出できないため、前後がラテン文字でない
+            # ことで区切りを判定する（「Ghost」「Lost」は検出しない）
+            r"(?<![a-z])O\.?S\.?T(?![a-z])",
             "サウンド[・\\s]?トラック",
             "サントラ",
             "劇伴",
