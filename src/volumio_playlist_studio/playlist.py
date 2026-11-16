@@ -93,6 +93,7 @@ REASON_UNSUITABLE = "雰囲気に合わない"
 REASON_GENRE = "ジャンル条件に合わない"
 REASON_CHILDREN = "子供向けの条件に合わない"
 REASON_NO_DURATION = "再生時間が不明"
+REASON_TOO_SHORT = "再生時間が短い"
 REASON_DUPLICATE = "重複"
 
 
@@ -107,6 +108,7 @@ class PlaylistRequest:
         randomness: 0 で適合度順、1 で最もランダム。
         relaxed: 利用者が条件の緩和を選んだ場合 True。適合度の基準を下げる。
         children_mode: 子供向けのアルバムの曲の扱い。
+        min_track_sec: この秒数より短い曲を除外する。0 なら除外しない。
     """
 
     mood: Mood
@@ -122,6 +124,7 @@ class PlaylistRequest:
     seed: int = 0
     relaxed: bool = False
     children_mode: ChildrenMode = ChildrenMode.EXCLUDE
+    min_track_sec: int = 0
 
     def validate(self, defaults: PlaylistDefaults) -> None:
         """条件を検証する。
@@ -148,6 +151,8 @@ class PlaylistRequest:
 
         if not (0.0 <= self.novelty <= 1.0 and 0.0 <= self.randomness <= 1.0):
             raise ValueError("novelty and randomness must be between 0 and 1")
+
+        validate_min_track_sec(self.min_track_sec, defaults)
 
     def to_dict(self) -> dict[str, object]:
         """保存用の辞書に変換する。"""
@@ -241,6 +246,35 @@ def children_allowed(candidate: Candidate, mode: ChildrenMode) -> bool:
 
     is_children = candidate.for_children is True
     return is_children if mode == ChildrenMode.ONLY else not is_children
+
+
+def validate_min_track_sec(min_track_sec: int, defaults: PlaylistDefaults) -> None:
+    """除外する短い曲の秒数を検証する。
+
+    Raises:
+        ValueError: 範囲外の場合。
+    """
+    if not 0 <= min_track_sec <= defaults.max_min_track_sec:
+        raise ValueError("min_track_sec is out of range")
+
+
+def duration_exclusion(track: Track, *, min_track_sec: int, needs_duration: bool) -> str | None:
+    """再生時間の条件で曲を除外する理由を返す。除外しない場合は None。
+
+    短い曲を除外する設定では、再生時間が不明な曲は短いかどうか確かめられないため除外する。
+
+    Args:
+        track: 対象の曲。
+        min_track_sec: この秒数より短い曲を除外する。0 なら除外しない。
+        needs_duration: 再生時間で長さを決める場合など、再生時間が分からない曲を使えない場合 True。
+    """
+    if (needs_duration or min_track_sec > 0) and not track.duration_sec:
+        return REASON_NO_DURATION
+
+    if track.duration_sec is not None and track.duration_sec < min_track_sec:
+        return REASON_TOO_SHORT
+
+    return None
 
 
 def suitability(classification: ClassificationResult | None, mood: Mood) -> float | None:
@@ -347,8 +381,11 @@ def _score_candidates(
             excluded[REASON_UNSUITABLE] += 1
             continue
 
-        if request.duration_min is not None and not candidate.track.duration_sec:
-            excluded[REASON_NO_DURATION] += 1
+        reason = duration_exclusion(
+            candidate.track, min_track_sec=request.min_track_sec, needs_duration=request.duration_min is not None
+        )
+        if reason is not None:
+            excluded[reason] += 1
             continue
 
         rank = fit + preference_bonus(candidate, request.novelty, request.randomness, noise)
@@ -534,12 +571,20 @@ def _shortfall(
 
         unit = "tracks"
 
+    return Shortfall(requested, achieved, unit, dict(excluded), _suggestions(request, excluded, unit))
+
+
+def _suggestions(request: PlaylistRequest, excluded: Counter[str], unit: str) -> list[str]:
+    """曲が足りないときに提示する緩和案。"""
     suggestions: list[str] = []
     if excluded[REASON_GENRE]:
         suggestions.append("ジャンルの指定を「全ジャンル」にするか、ジャンルを追加する")
 
     if excluded[REASON_CHILDREN] and request.children_mode == ChildrenMode.ONLY:
         suggestions.append("音楽ライブラリ画面で、子供向けのアルバムを Jev で判定する")
+
+    if excluded[REASON_TOO_SHORT]:
+        suggestions.append("除外する短い曲の秒数を下げる")
 
     if excluded[REASON_UNSUITABLE] and not request.relaxed:
         suggestions.append("条件を緩和して再生成する（雰囲気への適合度の基準を下げる）")
@@ -554,7 +599,7 @@ def _shortfall(
     if unit == "seconds":
         suggestions.append("再生時間を短くする")
 
-    return Shortfall(requested, achieved, unit, dict(excluded), suggestions)
+    return suggestions
 
 
 def move_item(tracks: list[SelectedTrack], index: int, offset: int) -> list[SelectedTrack]:

@@ -25,8 +25,10 @@ from volumio_playlist_studio.playlist import (
     arrange,
     children_allowed,
     duplicate_key,
+    duration_exclusion,
     preference_bonus,
     ranked_order,
+    validate_min_track_sec,
 )
 
 X_ATTRIBUTE = Attribute.BRIGHTNESS
@@ -80,6 +82,7 @@ class CircleRequest:
         novelty: 上限を付けたときだけ使う。0 で定番中心、1 で新しい発見中心。
         randomness: 上限を付けたときだけ使う。0 で中心に近い順、1 で最もランダム。
         children_mode: 子供向けのアルバムの曲の扱い。
+        min_track_sec: この秒数より短い曲を除外する。0 なら除外しない。
     """
 
     mood: Mood | CustomMood
@@ -95,6 +98,7 @@ class CircleRequest:
     smooth_order: bool = True
     seed: int = 0
     children_mode: ChildrenMode = ChildrenMode.EXCLUDE
+    min_track_sec: int = 0
 
     @property
     def center(self) -> MapPoint:
@@ -141,6 +145,8 @@ class CircleRequest:
 
         if not (0.0 <= self.novelty <= 1.0 and 0.0 <= self.randomness <= 1.0):
             raise ValueError("novelty and randomness must be between 0 and 1")
+
+        validate_min_track_sec(self.min_track_sec, defaults)
 
     def to_dict(self) -> dict[str, object]:
         """保存用の辞書に変換する。
@@ -292,8 +298,13 @@ def select_circle_tracks(
         if gap > request.radius + _BOUNDARY_TOLERANCE:
             continue
 
-        # 再生時間が不明な曲は、再生時間の上限を守れるか分からないため選ばない
-        if request.duration_min is not None and not candidate.track.duration_sec:
+        # 短い曲を除く。再生時間の上限を付けた場合、再生時間が不明な曲は上限を守れるか分からないため選ばない
+        if (
+            duration_exclusion(
+                candidate.track, min_track_sec=request.min_track_sec, needs_duration=request.duration_min is not None
+            )
+            is not None
+        ):
             continue
 
         closeness = max(0.0, 1.0 - gap / request.radius)
