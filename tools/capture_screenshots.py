@@ -83,6 +83,8 @@ DEMO_CUSTOM_MOODS: tuple[tuple[str, str, tuple[float, ...]], ...] = (
 # 雰囲気の作成欄に入力しておく例（作成ボタンは押さない）
 CUSTOM_MOOD_EXAMPLE = ("海辺の夕暮れ", "夕暮れの海辺を散歩しながら、少し切ない気分で")
 CIRCLE_CENTER = "雨の日曜の午後"
+# 「アーティストで選ぶ」で選ぶアーティスト（サンプルデータの架空のアーティスト）
+ARTIST_EXAMPLES = ("Example Jazz Trio", "Fictional Folk Duo")
 # Jev を使う入力欄を表示するためだけの架空の API キー。実在のキーではなく、Jev には送らない
 PLACEHOLDER_API_KEY = "placeholder-for-screenshots"
 # 欧文は Noto Sans のまま、欧文フォントにない文字は日本語のフォントで描画させる。
@@ -627,6 +629,31 @@ def capture_custom_moods(browser: Browser, base_url: str, output_dir: Path) -> N
         context.close()
 
 
+def capture_artist_playlist(page: Page, base_url: str, output_dir: Path) -> None:
+    """「アーティストで選ぶ」でアーティストを選んだ条件の欄を撮り、その条件で生成できることを確かめる。"""
+    open_page(page, base_url, "playlist")
+    page.get_by_text("アーティストで選ぶ", exact=True).click()
+    wait_for_app(page)
+    fill_seed(page)
+    artists = page.get_by_label("アーティスト（複数選べます）", exact=True)
+    for name in ARTIST_EXAMPLES:
+        artists.click()
+        artists.fill(name)
+        page.get_by_role("option", name=name, exact=False).click()
+        wait_for_app(page)
+
+    # 選択欄の候補一覧を閉じてから撮る
+    page.keyboard.press("Escape")
+    wait_for_app(page)
+    for name in ARTIST_EXAMPLES:
+        expect(page.get_by_text(name, exact=False).first).to_be_visible()
+
+    save_full_page(page, output_dir / "playlist-artist.png")
+    page.get_by_role("button", name="プレイリストを生成").click()
+    wait_for_app(page)
+    expect(page.get_by_role("heading", name=f"{'・'.join(ARTIST_EXAMPLES)}のプレイリスト")).to_be_visible()
+
+
 def select_first_row(page: Page, table: Locator, row_count: int) -> None:
     """表の 1 行目を左端のチェックボックスで選ぶ。
 
@@ -649,6 +676,7 @@ def capture_desktop(browser: Browser, base_url: str, output_dir: Path) -> None:
     context = browser.new_context(viewport=DESKTOP_VIEWPORT, device_scale_factor=DEVICE_SCALE_FACTOR, locale="ja-JP")
     try:
         capture_pages(context.new_page(), base_url, output_dir, "")
+        capture_artist_playlist(context.new_page(), base_url, output_dir)
     finally:
         context.close()
 
