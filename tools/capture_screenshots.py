@@ -23,13 +23,18 @@ import tempfile
 import time
 from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
+from dataclasses import replace
 from pathlib import Path
 
-from playwright.sync_api import Browser, Page, ViewportSize, expect, sync_playwright
+import numpy as np
+from playwright.sync_api import Browser, Locator, Page, ViewportSize, expect, sync_playwright
 
+from volumio_playlist_studio.classify.jev import ENGINE_NAME as JEV_ENGINE
 from volumio_playlist_studio.classify.rules import ENGINE_NAME as RULES_ENGINE
 from volumio_playlist_studio.config import (
     DATA_DIR_ENV,
+    JEV_MOOD_QUESTION_VERSION,
+    JEV_QUESTION_VERSION,
     LAN_ADDRESS_ENV,
     LAN_ENV,
     PORT_ENV,
@@ -37,14 +42,16 @@ from volumio_playlist_studio.config import (
     TYPESAFE_API_KEY_ENV,
     VOLUMIO_HOST_ENV,
     EvaluationDefaults,
+    JevSettings,
     load_app_config,
 )
 from volumio_playlist_studio.evaluation import select_evaluation_sample
 from volumio_playlist_studio.launcher import LOOPBACK, build_command, streamlit_running
-from volumio_playlist_studio.models import Genre, Mood
+from volumio_playlist_studio.models import Attribute, AttributeScore, Genre, Mood
 from volumio_playlist_studio.sample_data import DEMO_LIBRARY_ROOT, load_demo_library
 from volumio_playlist_studio.storage import analysis as analysis_store
 from volumio_playlist_studio.storage import settings_store
+from volumio_playlist_studio.storage.custom_moods import CustomMoodDraft, save_custom_mood
 from volumio_playlist_studio.storage.database import connect, transaction
 from volumio_playlist_studio.storage.evaluations import EvaluationLabel, Verdict, add_to_evaluation_set, save_label
 from volumio_playlist_studio.storage.tracks import list_tracks
@@ -65,6 +72,19 @@ PLAYLIST_SEED = 2024
 PLAYLIST_NAME = "リラックス（サンプル）"
 # 評価対象のうち評価済みにする曲数。未評価の曲も残し、画面の「評価済み n 曲」が分かるようにする
 EVALUATED_COUNT = 24
+# 自由記述の雰囲気の例。Jev には問い合わせず、説明文に合う位置と属性の値を手で決めて登録する。
+# 既存の雰囲気と名前が重ならない位置に置く。値の並びは明るさ・エネルギー感・リラックス度・落ち着き・
+# 作業 BGM・パーティー・夜の BGM
+DEMO_CUSTOM_MOODS: tuple[tuple[str, str, tuple[float, ...]], ...] = (
+    ("雨の日曜の午後", "雨の日曜の午後、本を読みながらゆっくり過ごす", (0.35, 0.2, 0.85, 0.8, 0.7, 0.05, 0.5)),
+    ("深夜のドライブ", "人の少ない夜の高速道路を、街の灯りを眺めながら走る", (0.35, 0.68, 0.4, 0.35, 0.3, 0.3, 0.9)),
+    ("夜明けのランニング", "夜明け前に走り出し、少しずつ気分を上げていく", (0.9, 0.8, 0.2, 0.2, 0.2, 0.5, 0.05)),
+)
+# 雰囲気の作成欄に入力しておく例（作成ボタンは押さない）
+CUSTOM_MOOD_EXAMPLE = ("海辺の夕暮れ", "夕暮れの海辺を散歩しながら、少し切ない気分で")
+CIRCLE_CENTER = "雨の日曜の午後"
+# Jev を使う入力欄を表示するためだけの架空の API キー。実在のキーではなく、Jev には送らない
+PLACEHOLDER_API_KEY = "placeholder-for-screenshots"
 # 欧文は Noto Sans のまま、欧文フォントにない文字は日本語のフォントで描画させる。
 # lang を ja にするのは、文字単位のフォールバックでも日本語の字形を持つフォントを選ばせるため。
 FONTCONFIG_TEMPLATE = """<?xml version="1.0"?>
@@ -151,6 +171,79 @@ def _seed_evaluations(conn: sqlite3.Connection) -> None:
             )
 
 
+def prepare_mood_database(database_path: Path) -> None:
+    """雰囲気マップの撮影用に、`prepare_database` の内容へ Jev の判定結果の例と自由記述の雰囲気を加える。
+
+    明るさは Jev でしか判定しないため、Jev の判定結果がないとマップに曲が載らない。Jev の結果は分類で優先されるため、
+    ほかの画面のキャプチャが変わらないよう、別の DB に登録する。
+    """
+    prepare_database(database_path)
+    conn = connect(database_path)
+    try:
+        _seed_jev_results(conn)
+        _seed_custom_moods(conn)
+    finally:
+        conn.close()
+
+
+def _seed_jev_results(conn: sqlite3.Connection) -> None:
+    """ルールベースの結果に明るさを加えたものを、Jev の判定結果として登録する。Jev には問い合わせない。
+
+    明るさは、パーティー向きなほど明るく、夜の BGM 向きなほど暗いとみなして決め、少しばらつかせる。
+    """
+    rng = np.random.default_rng(PLAYLIST_SEED)
+    with transaction(conn):
+        for track_id, stored in sorted(analysis_store.load_classifications(conn, RULES_ENGINE).items()):
+            party = stored.result.attribute_value(Attribute.PARTY)
+            night = stored.result.attribute_value(Attribute.NIGHT_BGM)
+            if party is None or night is None:
+                continue
+
+            brightness = float(np.clip(0.2 + 0.6 * party + 0.3 * (1 - night) + rng.normal(0, 0.08), 0, 1))
+            attributes = {
+                **stored.result.attributes,
+                Attribute.BRIGHTNESS: AttributeScore(value=round(brightness, 3), confidence=0.8),
+            }
+            result = replace(
+                stored.result,
+                engine=JEV_ENGINE,
+                engine_version=JEV_QUESTION_VERSION,
+                model=JevSettings().model,
+                attributes=attributes,
+                notes=[],
+            )
+            analysis_store.save_classification(conn, track_id, result)
+
+
+def _seed_custom_moods(conn: sqlite3.Connection) -> None:
+    """自由記述の雰囲気の例を登録する。"""
+    attributes = (
+        Attribute.BRIGHTNESS,
+        Attribute.ENERGY,
+        Attribute.RELAXATION,
+        Attribute.CALMNESS,
+        Attribute.WORK_BGM,
+        Attribute.PARTY,
+        Attribute.NIGHT_BGM,
+    )
+    with transaction(conn):
+        for name, description, values in DEMO_CUSTOM_MOODS:
+            scores = {a: AttributeScore(value=v, confidence=0.8) for a, v in zip(attributes, values, strict=True)}
+            save_custom_mood(
+                conn,
+                CustomMoodDraft(
+                    name=name,
+                    description=description,
+                    x=values[0],
+                    y=values[1],
+                    attributes=scores,
+                    expressible=0.9,
+                    question_version=JEV_MOOD_QUESTION_VERSION,
+                    model=JevSettings().model,
+                ),
+            )
+
+
 def _verdict[T: (Genre, Mood)](
     index: int, every: int, predicted: T | None, options: list[T]
 ) -> tuple[Verdict, T | None]:
@@ -165,8 +258,14 @@ def _verdict[T: (Genre, Mood)](
 
 
 @contextmanager
-def run_app(data_dir: Path) -> Iterator[str]:
-    """一時フォルダの DB を使って Streamlit を起動し、接続先の URL を返す。"""
+def run_app(data_dir: Path, *, show_jev_forms: bool = False) -> Iterator[str]:
+    """一時フォルダの DB を使って Streamlit を起動し、接続先の URL を返す。
+
+    Args:
+        data_dir: DB を置く一時フォルダ。
+        show_jev_forms: Jev を使う入力欄を表示するため、API キーに架空の値を設定する。
+            Jev と通信するのはボタンを押したときだけで、撮影ではそのボタンを押さない。
+    """
     port = _free_port()
     env = dict(os.environ)
     # .env は既存の環境変数を上書きしないため、空文字を設定して利用者の接続先・API キー・LAN 設定を読ませない
@@ -174,7 +273,7 @@ def run_app(data_dir: Path) -> Iterator[str]:
         {
             DATA_DIR_ENV: str(data_dir),
             PORT_ENV: str(port),
-            TYPESAFE_API_KEY_ENV: "",
+            TYPESAFE_API_KEY_ENV: PLACEHOLDER_API_KEY if show_jev_forms else "",
             VOLUMIO_HOST_ENV: "",
             LAN_ENV: "",
             LAN_ADDRESS_ENV: "",
@@ -495,6 +594,56 @@ def check_navigation_state(page: Page) -> None:
         raise RuntimeError("playlist seed was lost after navigation")
 
 
+def capture_custom_moods(browser: Browser, base_url: str, output_dir: Path) -> None:
+    """自由記述の雰囲気の作成欄と、その雰囲気を中心にした雰囲気マップを PC の画面幅で撮る。
+
+    `prepare_mood_database` の DB で、`show_jev_forms` を付けて起動したアプリを使う。
+    """
+    context = browser.new_context(viewport=DESKTOP_VIEWPORT, device_scale_factor=DEVICE_SCALE_FACTOR, locale="ja-JP")
+    try:
+        page = context.new_page()
+        open_page(page, base_url, "manage")
+        page.get_by_role("tab", name="雰囲気").click()
+        wait_for_app(page)
+        name, description = CUSTOM_MOOD_EXAMPLE
+        page.get_by_label("名前（マップに表示）", exact=True).fill(name)
+        page.get_by_label("説明文", exact=True).fill(description)
+        page.get_by_label("説明文", exact=True).blur()
+        wait_for_app(page)
+        expect(page.get_by_role("button", name="Jev で位置を決めて作成")).to_be_enabled()
+        select_first_row(page, page.get_by_test_id("stDataFrame").first, len(DEMO_CUSTOM_MOODS))
+        expect(page.get_by_text("マップ上の位置:", exact=False)).to_be_visible()
+        save_full_page(page, output_dir / "custom-mood.png")
+
+        open_page(page, base_url, "playlist")
+        page.get_by_text("マップの円で選ぶ", exact=True).click()
+        wait_for_app(page)
+        page.get_by_label("円の中心（雰囲気）", exact=True).click()
+        page.get_by_role("option", name=CIRCLE_CENTER, exact=True).click()
+        wait_for_app(page)
+        expect(page.get_by_text("選ばれる曲: 0 曲", exact=False)).not_to_be_visible()
+        save_full_page(page, output_dir / "playlist-circle.png")
+    finally:
+        context.close()
+
+
+def select_first_row(page: Page, table: Locator, row_count: int) -> None:
+    """表の 1 行目を左端のチェックボックスで選ぶ。
+
+    表は canvas に描かれ、行を DOM から操作できないため、見出しと行の高さが同じとして位置を求めてクリックする。
+    """
+    box = table.bounding_box()
+    if box is None or row_count < 1:
+        raise RuntimeError("table has no rows to select")
+
+    row_height = box["height"] / (row_count + 1)
+    page.mouse.click(box["x"] + row_height / 2, box["y"] + row_height * 1.5)
+    # 表の上にマウスがあると操作用のツールバーが、サイドバーの上にあると折りたたみボタンが表示されるため、
+    # 本文の右側の余白に移す
+    page.mouse.move(DESKTOP_VIEWPORT["width"] - 20, DESKTOP_VIEWPORT["height"] - 20)
+    wait_for_app(page)
+
+
 def capture_desktop(browser: Browser, base_url: str, output_dir: Path) -> None:
     """PC の画面幅で各画面を撮る。"""
     context = browser.new_context(viewport=DESKTOP_VIEWPORT, device_scale_factor=DEVICE_SCALE_FACTOR, locale="ja-JP")
@@ -556,7 +705,26 @@ def main(argv: list[str] | None = None) -> int:
             finally:
                 browser.close()
 
+    if args.viewport in {"all", "desktop"}:
+        capture_mood_screens(output_dir)
+
     return 0
+
+
+def capture_mood_screens(output_dir: Path) -> None:
+    """雰囲気マップ用の DB でアプリを起動し直して、自由記述の雰囲気の画面を撮る。"""
+    with (
+        tempfile.TemporaryDirectory(prefix="vps-screenshots-") as tmp,
+        tempfile.TemporaryDirectory(prefix="vps-browser-") as browser_dir,
+    ):
+        data_dir = Path(tmp)
+        prepare_mood_database(load_app_config({DATA_DIR_ENV: str(data_dir)}).database_path)
+        with run_app(data_dir, show_jev_forms=True) as base_url, sync_playwright() as playwright:
+            browser = playwright.chromium.launch(env=browser_env(Path(browser_dir)))
+            try:
+                capture_custom_moods(browser, base_url, output_dir)
+            finally:
+                browser.close()
 
 
 if __name__ == "__main__":
