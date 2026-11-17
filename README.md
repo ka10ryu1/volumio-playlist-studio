@@ -6,7 +6,13 @@ Raspberry Pi 上の Volumio に保存した音楽を PC から SMB 共有経由�
 
 ![プレイリスト作成画面](docs/images/playlist-top.png)
 
-プレイリスト作成画面の上部です（サンプルデータの架空の楽曲）。この続きと、ほかの画面のキャプチャは [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md) にまとめています。
+プレイリスト作成画面の上部です（サンプルデータの架空の楽曲）。
+
+「雨の日曜の午後、本を読みながら」のように雰囲気を文章で書くと、Jev が明るさ × エネルギー感のマップ上の位置を決めます。その雰囲気を中心に円を描き、円に入る曲からプレイリストを作れます。
+
+![雰囲気マップの円で選ぶ](docs/images/playlist-circle.png)
+
+この続きと、ほかの画面のキャプチャは [docs/SCREENSHOTS.md](docs/SCREENSHOTS.md) にまとめています。
 
 ## 実装状況
 

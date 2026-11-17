@@ -9,10 +9,11 @@ import pytest
 
 from volumio_playlist_studio.classify.rules import ENGINE_NAME as RULES_ENGINE
 from volumio_playlist_studio.config import PROJECT_ROOT
-from volumio_playlist_studio.models import Genre, Mood
+from volumio_playlist_studio.models import Attribute, Genre, Mood
 from volumio_playlist_studio.sample_data import DEMO_LIBRARY_ROOT
 from volumio_playlist_studio.storage import analysis as analysis_store
 from volumio_playlist_studio.storage import settings_store
+from volumio_playlist_studio.storage.custom_moods import list_custom_moods
 from volumio_playlist_studio.storage.database import connect
 from volumio_playlist_studio.storage.evaluations import Verdict, load_labels
 from volumio_playlist_studio.storage.tracks import list_tracks
@@ -67,6 +68,49 @@ def test_prepare_database_registers_demo_library_and_evaluations(tmp_path: Path)
 
         # 指標と誤判定の傾向が画面に出るよう、正解と誤りの両方を含む
         assert {Verdict.CORRECT, Verdict.INCORRECT} <= verdicts
+    finally:
+        conn.close()
+
+
+def test_prepare_database_keeps_rule_results_only(tmp_path: Path) -> None:
+    # Jev の結果は分類で優先されるため、通常の画面のキャプチャ用の DB には登録しない
+    database = tmp_path / "studio.sqlite3"
+    tool.prepare_database(database)
+
+    conn = connect(database)
+    try:
+        assert analysis_store.load_classifications(conn, "jev") == {}
+        assert list_custom_moods(conn) == []
+    finally:
+        conn.close()
+
+
+def test_prepare_mood_database_places_tracks_and_custom_moods_on_map(tmp_path: Path) -> None:
+    database = tmp_path / "studio.sqlite3"
+    tool.prepare_mood_database(database)
+
+    conn = connect(database)
+    try:
+        rules = analysis_store.load_classifications(conn, RULES_ENGINE)
+        jev = analysis_store.load_classifications(conn, "jev")
+        # 雰囲気マップに曲が載るよう、全曲に明るさとエネルギー感がある
+        assert len(jev) == 60
+        for track_id, stored in jev.items():
+            brightness = stored.result.attribute_value(Attribute.BRIGHTNESS)
+            assert brightness is not None
+            assert 0.0 <= brightness <= 1.0
+            assert stored.result.attribute_value(Attribute.ENERGY) is not None
+            # ジャンル・雰囲気はルールベースの結果と同じにし、ほかの画面の見え方を変えない
+            assert stored.result.genre == rules[track_id].result.genre
+            assert stored.result.mood == rules[track_id].result.mood
+
+        moods = list_custom_moods(conn)
+        assert {m.name for m in moods} == {"雨の日曜の午後", "深夜のドライブ", "夜明けのランニング"}
+        for mood in moods:
+            assert 0.0 <= mood.x <= 1.0
+            assert 0.0 <= mood.y <= 1.0
+            assert mood.attributes[Attribute.BRIGHTNESS].value == mood.x
+            assert mood.attributes[Attribute.ENERGY].value == mood.y
     finally:
         conn.close()
 
@@ -160,6 +204,23 @@ def test_run_app_ignores_user_connection_settings(
     assert kwargs["cwd"] == PROJECT_ROOT
     # LAN 設定を読まないため、この PC からだけ接続できる
     assert command[command.index("--server.address") + 1] == "127.0.0.1"
+
+
+def test_run_app_sets_placeholder_api_key_only_for_jev_forms(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, launched: list[tuple[list[str], dict[str, object]]]
+) -> None:
+    # Jev の入力欄を表示するときも、利用者の API キーではなく架空の値を使う
+    monkeypatch.setenv("TYPESAFE_API_KEY", "user-secret")
+    monkeypatch.setattr(tool, "streamlit_running", lambda _port: True)
+    _fake_popen(monkeypatch, launched, FakeProcess())
+
+    with tool.run_app(tmp_path, show_jev_forms=True):
+        pass
+
+    [(_command, kwargs)] = launched
+    env = kwargs["env"]
+    assert isinstance(env, dict)
+    assert env["TYPESAFE_API_KEY"] == "placeholder-for-screenshots"
 
 
 def test_run_app_terminates_streamlit_when_capture_fails(
