@@ -50,11 +50,13 @@ class CreationMethod(StrEnum):
 
     MOOD = "mood"
     CIRCLE = "circle"
+    ARTIST = "artist"
 
 
 CREATION_METHOD_LABELS: dict[CreationMethod, str] = {
     CreationMethod.MOOD: "雰囲気と長さで選ぶ",
     CreationMethod.CIRCLE: "マップの円で選ぶ",
+    CreationMethod.ARTIST: "アーティストで選ぶ",
 }
 
 # 雰囲気ごとに（属性, 重み, 目標値）を定める。適合度は 1 - |値 - 目標値| の重み付き平均。

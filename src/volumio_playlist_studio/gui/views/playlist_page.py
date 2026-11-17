@@ -1,6 +1,6 @@
 """プレイリスト作成画面。
 
-条件を指定した生成（雰囲気と長さ、またはマップの円で選ぶ）、雰囲気マップの表示、編集・保存を行う。
+条件を指定した生成（雰囲気と長さ、マップの円、またはアーティストで選ぶ）、雰囲気マップの表示、編集・保存を行う。
 保存済みのプレイリストの一覧・削除・Volumio への登録と、自由記述の雰囲気の作成・削除はプレイリスト管理画面で行う。
 """
 
@@ -10,6 +10,7 @@ from datetime import datetime
 
 import streamlit as st
 
+from volumio_playlist_studio.artist_playlist import ArtistRequest, generate_artist_playlist, list_artists
 from volumio_playlist_studio.catalog import load_candidates
 from volumio_playlist_studio.config import PlaylistDefaults
 from volumio_playlist_studio.gui.context import PageContext
@@ -48,6 +49,8 @@ from volumio_playlist_studio.storage.playlists import PlaylistDraft, PlaylistEnt
 _METHOD_KEY = "pl_method"
 _MOOD_KEY = "pl_mood"
 _CENTER_KEY = "pl_center"
+_ARTISTS_KEY = "pl_artist_names"
+_ARTIST_MOOD_KEY = "pl_artist_mood"
 _RESULT_KEY = "pl_result"
 _DRAFT_KEY = "pl_draft"
 _SAVED_KEY = "pl_saved_id"
@@ -56,6 +59,8 @@ _SEED_KEY = "pl_seed"
 # 円の中心の選択肢のうち、自由記述の雰囲気を表す値の接頭辞（既存の雰囲気は Mood の値そのもの）
 _CUSTOM_CENTER_PREFIX = "custom:"
 _MAX_SEED = 1_000_000
+# プレイリスト名に並べるアーティストの数。残りは「ほか N 組」とする
+_TITLE_ARTISTS = 2
 _SECONDS_PER_MINUTE = 60
 _CAP_NONE = "なし"
 _CAP_DURATION = "再生時間"
@@ -64,6 +69,8 @@ _INPUT_KEYS = (
     _METHOD_KEY,
     _MOOD_KEY,
     _CENTER_KEY,
+    _ARTISTS_KEY,
+    _ARTIST_MOOD_KEY,
     _SEED_KEY,
     "pl_radius",
     "pl_cap",
@@ -86,8 +93,9 @@ _INPUT_VALUES_KEY = "pl_input_values"
 _SUGGESTED_GENRE_KEY = "pl_suggested_genre"
 _GENRE_APPLIED_KEY = "pl_genre_applied"
 
-type Request = PlaylistRequest | CircleRequest
-type Result = GenerationResult[PlaylistRequest] | GenerationResult[CircleRequest]
+# ArtistRequest は PlaylistRequest の派生のため、型で分岐するときは ArtistRequest を先に判定する
+type Request = PlaylistRequest | CircleRequest | ArtistRequest
+type Result = GenerationResult[PlaylistRequest] | GenerationResult[CircleRequest] | GenerationResult[ArtistRequest]
 
 
 @dataclass(frozen=True)
@@ -174,8 +182,9 @@ def render(ctx: PageContext, *, on_manage: Callable[[], None] | None = None) -> 
     with st.expander("1. 選曲の条件", expanded=genre_applied or _RESULT_KEY not in st.session_state):
         request = _conditions_panel(defaults, ctx, candidates, custom_moods, on_manage)
 
-    # 円で選ぶ場合は、条件の欄の中にマップを描く
-    if st.session_state.get(_METHOD_KEY) != CreationMethod.CIRCLE:
+    # 円で選ぶ場合は、条件の欄の中にマップを描く。
+    # アーティストで選ぶ場合は、ライブラリ全体のマップは選曲と関係が薄いため描かない
+    if st.session_state.get(_METHOD_KEY) == CreationMethod.MOOD:
         with st.expander("雰囲気マップ"):
             mood_map_panel.render(candidates, custom_moods, selected=st.session_state.get(_MOOD_KEY))
 
@@ -207,6 +216,7 @@ def _conditions_panel(
 
     for key, value in {
         _METHOD_KEY: CreationMethod.MOOD,
+        _ARTIST_MOOD_KEY: Mood.OMAKASE,
         "pl_duration": defaults.default_duration_min,
         "pl_count": 15,
         # 半径は画面の表示（0〜10）に合わせた値で持つ
@@ -231,6 +241,9 @@ def _conditions_panel(
         )
         if method == CreationMethod.CIRCLE:
             return _circle_conditions(defaults, ctx, candidates, custom_moods, on_manage)
+
+        if method == CreationMethod.ARTIST:
+            return _artist_conditions(defaults, ctx, candidates)
 
         return _mood_conditions(defaults, ctx)
 
@@ -356,6 +369,67 @@ def _circle_conditions(
         return None
 
     return request
+
+
+def _artist_conditions(
+    defaults: PlaylistDefaults, ctx: PageContext, candidates: list[Candidate]
+) -> ArtistRequest | None:
+    artists = {summary.name: summary.track_count for summary in list_artists(candidates)}
+    # ライブラリの変更で消えたアーティストが選択されたまま残ると、選択欄がエラーになるため外す
+    selected_before = st.session_state.get(_ARTISTS_KEY, [])
+    if any(name not in artists for name in selected_before):
+        st.session_state[_ARTISTS_KEY] = [name for name in selected_before if name in artists]
+
+    if not artists:
+        st.info("アーティスト名のタグが付いた曲がありません。")
+
+    selected = st.multiselect(
+        "アーティスト（複数選べます）",
+        list(artists),
+        format_func=lambda name: f"{name}（{artists[name]} 曲）",
+        placeholder="アーティスト名で検索",
+        key=_ARTISTS_KEY,
+    )
+    st.caption(
+        "タグのアーティスト名が一致する曲を選びます（「feat.」などを含む表記は別のアーティストとして扱います）。"
+    )
+    mood = st.selectbox(
+        "雰囲気（おまかせなら雰囲気で絞り込みません）",
+        PLAYLIST_MOODS,
+        format_func=MOOD_LABELS.__getitem__,
+        key=_ARTIST_MOOD_KEY,
+        filter_mode=None,
+    )
+    by_count = st.radio("長さの指定", ["再生時間", "曲数"], horizontal=True, key="pl_length") == "曲数"
+    duration, count = _length_inputs(defaults)
+    st.caption("「長さの指定」で選んだ方の値を使います。")
+    options = _detail_options(defaults, ctx, ranking="適合度順", preference_note=None)
+    if not _generate_button():
+        return None
+
+    if not selected:
+        st.error("アーティストを 1 つ以上選んでください。")
+        return None
+
+    if not _genres_are_valid(options):
+        return None
+
+    return ArtistRequest(
+        artists=tuple(selected),
+        mood=mood or Mood.OMAKASE,
+        duration_min=None if by_count else duration,
+        track_count=count if by_count else None,
+        genre_mode=options.genre_mode,
+        genres=options.genres,
+        children_mode=options.children_mode,
+        min_track_sec=options.min_track_sec,
+        novelty=options.novelty,
+        randomness=options.randomness,
+        avoid_same_artist=options.avoid_same_artist,
+        avoid_duplicates=options.avoid_duplicates,
+        smooth_order=options.smooth_order,
+        seed=options.seed,
+    )
 
 
 def _center_options(custom_moods: list[CustomMood]) -> dict[str, Mood | CustomMood]:
@@ -502,6 +576,8 @@ def _generate(candidates: list[Candidate], request: Request, defaults: PlaylistD
     result: Result
     if isinstance(request, CircleRequest):
         result = generate_circle_playlist(candidates, request, defaults)
+    elif isinstance(request, ArtistRequest):
+        result = generate_artist_playlist(candidates, request, defaults)
     else:
         result = generate_playlist(candidates, request, defaults)
 
@@ -516,7 +592,24 @@ def _playlist_title(request: Request) -> str:
     if isinstance(request, CircleRequest):
         return f"{_center_label(request.mood)}周辺"
 
+    if isinstance(request, ArtistRequest):
+        return _artist_title(request)
+
     return MOOD_LABELS[request.mood]
+
+
+def _artist_title(request: ArtistRequest) -> str:
+    """アーティストで選ぶ場合の短い説明。3 組以上は先頭の 2 組と残りの数で表す。"""
+    names = list(request.artists)
+    shown = names[:_TITLE_ARTISTS]
+    title = "・".join(shown)
+    if len(names) > len(shown):
+        title += f" ほか {len(names) - len(shown)} 組"
+
+    if request.mood != Mood.OMAKASE:
+        title += f"（{MOOD_LABELS[request.mood]}）"
+
+    return title
 
 
 def _shortfall_notice(candidates: list[Candidate], result: Result, defaults: PlaylistDefaults) -> None:

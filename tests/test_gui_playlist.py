@@ -9,7 +9,7 @@ from volumio_playlist_studio.models import (
     Genre,
     Mood,
 )
-from volumio_playlist_studio.playlist import ChildrenMode, GenreMode
+from volumio_playlist_studio.playlist import ChildrenMode, CreationMethod, GenreMode
 from volumio_playlist_studio.storage.playlists import list_playlists
 
 DEFAULTS = PlaylistDefaults()
@@ -184,3 +184,63 @@ def test_changing_conditions_does_not_replace_draft(demo: sqlite3.Connection) ->
     assert at.dataframe[0].value.iloc[2]["曲名"] == before[0]
     click(at, "プレイリストを生成")
     assert len(at.dataframe[0].value) == 3
+
+
+def test_playlist_by_artist_generates_and_saves_conditions(demo: sqlite3.Connection) -> None:
+    at = run_view("playlist_page")
+    at.radio(key="pl_method").set_value(CreationMethod.ARTIST).run()
+    artists = at.multiselect(key="pl_artist_names")
+    # サンプルデータは 10 組のアーティストが 6 曲ずつ
+    assert len(artists.options) == 10
+    assert "Example Jazz Trio（6 曲）" in artists.options
+    # 雰囲気は既定で絞り込まない
+    assert at.selectbox(key="pl_artist_mood").value == Mood.OMAKASE
+
+    click(at, "プレイリストを生成")
+    assert any("アーティストを 1 つ以上選んでください" in e.value for e in at.error)
+
+    artists.set_value(["Example Jazz Trio", "テスト・ポップス"]).run()
+    at.radio(key="pl_length").set_value("曲数").run()
+    at.number_input(key="pl_count").set_value(20).run()
+    click(at, "プレイリストを生成")
+
+    assert any(h.value == "Example Jazz Trio・テスト・ポップスのプレイリスト" for h in at.subheader)
+    rows = at.dataframe[0].value
+    assert set(rows["アーティスト"]) == {"Example Jazz Trio", "テスト・ポップス"}
+    # 2 組で 12 曲しかないため、アーティストの追加を提案する
+    assert len(rows) == 12
+    assert any("アーティストを追加する" in w.value for w in at.warning)
+
+    click(at, "プレイリストを保存")
+    [saved] = list_playlists(demo)
+    assert saved.name.startswith("Example Jazz Trio・テスト・ポップス ")
+    assert saved.conditions["method"] == "artist"
+    assert saved.conditions["artists"] == ["Example Jazz Trio", "テスト・ポップス"]
+    assert saved.conditions["mood"] == "omakase"
+    assert saved.conditions["track_count"] == 20
+
+
+def test_playlist_by_artist_with_mood_shows_mood_in_title(demo: sqlite3.Connection) -> None:
+    at = run_view("playlist_page")
+    at.radio(key="pl_method").set_value(CreationMethod.ARTIST).run()
+    at.multiselect(key="pl_artist_names").set_value(["サンプル弦楽団", "Demo Quiet Piano", "Example Jazz Trio"]).run()
+    at.selectbox(key="pl_artist_mood").set_value(Mood.RELAX).run()
+    click(at, "プレイリストを生成")
+
+    assert any(
+        h.value == "サンプル弦楽団・Demo Quiet Piano ほか 1 組（リラックス）のプレイリスト" for h in at.subheader
+    )
+    chosen = set(at.dataframe[0].value["アーティスト"])
+    assert chosen
+    assert chosen <= {"サンプル弦楽団", "Demo Quiet Piano", "Example Jazz Trio"}
+
+
+def test_playlist_by_artist_drops_artists_missing_from_library(demo: sqlite3.Connection) -> None:
+    at = run_view("playlist_page")
+    at.radio(key="pl_method").set_value(CreationMethod.ARTIST).run()
+    # ライブラリの変更で消えたアーティストが選択に残っていても、画面はエラーにならない
+    at.session_state["pl_artist_names"] = ["存在しないアーティスト", "Example Jazz Trio"]
+    at.run()
+
+    assert not at.exception
+    assert at.multiselect(key="pl_artist_names").value == ["Example Jazz Trio"]
