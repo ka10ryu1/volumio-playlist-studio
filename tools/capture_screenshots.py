@@ -459,7 +459,7 @@ def check_settings_keyboard(page: Page) -> None:
     model.fill("keyboard-test-model")
     model.press("Enter")
     wait_for_app(page)
-    saved = page.get_by_text("保存しました。判定基準の変更は、次に Jev で判定した曲から反映されます。")
+    saved = page.get_by_text("保存しました。判定基準の変更は、次に Jev で判定した曲から反映されます")
     expect(saved).not_to_be_visible()
     form = page.get_by_test_id("stForm").filter(has=model)
     form.get_by_role("button", name="保存", exact=True).click()
