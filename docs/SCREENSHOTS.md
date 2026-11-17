@@ -108,7 +108,7 @@
 | 選曲条件・全体 | [画像](images/playlist-conditions-mobile.png) | [画像](images/playlist-conditions-tablet.png) | [画像](images/playlist-conditions.png) |
 | 曲の編集 | [画像](images/playlist-edit-mobile.png) | [画像](images/playlist-edit-tablet.png) | [画像](images/playlist.png) |
 | 保存 | [画像](images/playlist-save-mobile.png) | [画像](images/playlist-save-tablet.png) | [画像](images/playlist-save.png) |
-| プレイリスト管理 | - | - | [画像](images/manage.png) |
+| プレイリスト管理 | [画像](images/manage-mobile.png) | [画像](images/manage-tablet.png) | [画像](images/manage.png) |
 | 評価入力 | [画像](images/evaluation-mobile.png) | [画像](images/evaluation-tablet.png) | [画像](images/evaluation.png) |
 | 一般設定 | [画像](images/settings-mobile.png) | [画像](images/settings-tablet.png) | [画像](images/settings.png) |
 
@@ -141,3 +141,5 @@ uv run python tools/capture_screenshots.py --viewport tablet
 ```
 
 `--output` で保存先を変更できます。日本語表示にはOSの日本語フォントが必要です（例: WSL/Linuxでは `fonts-noto-cjk`）。アプリが外部フォントを取得することはありません。
+
+WSL/Linuxでは、中国語フォント（WenQuanYi Zen Hei など）も入っていると漢字・かなが中国語の字形で表示されることがあります。撮影用のブラウザには和文を Noto Sans CJK JP で描画する fontconfig 設定を渡し、ページ名とサイドバーの描画に日本語以外のCJKフォントが使われた場合や日本語フォントが見つからない場合は撮影を中止します。

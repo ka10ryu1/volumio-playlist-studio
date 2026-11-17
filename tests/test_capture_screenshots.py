@@ -200,3 +200,63 @@ def test_run_app_gives_up_when_streamlit_does_not_respond(
         pytest.fail("streamlit should not be reported as started")
 
     assert process.terminated
+
+
+@pytest.mark.parametrize(
+    "fonts",
+    [
+        {"Noto Sans", "Noto Sans CJK JP"},
+        {"Segoe UI", "Yu Gothic UI"},
+        {"Meiryo"},
+        {"Noto Sans", "IPAGothic"},
+    ],
+)
+def test_check_japanese_fonts_accepts_japanese_fonts(fonts: set[str]) -> None:
+    tool.check_japanese_fonts(fonts)
+
+
+@pytest.mark.parametrize(
+    "fonts",
+    [
+        {"Noto Sans", "WenQuanYi Zen Hei"},
+        {"Noto Sans CJK JP", "Noto Sans CJK SC"},
+        {"Noto Sans CJK KR"},
+        {"Microsoft YaHei", "Meiryo"},
+        {"Droid Sans Fallback"},
+    ],
+)
+def test_check_japanese_fonts_rejects_non_japanese_cjk_fonts(fonts: set[str]) -> None:
+    with pytest.raises(RuntimeError, match="non-Japanese CJK font"):
+        tool.check_japanese_fonts(fonts)
+
+
+@pytest.mark.parametrize("fonts", [{"Noto Sans"}, set()])
+def test_check_japanese_fonts_requires_japanese_font(fonts: set[str]) -> None:
+    # 和文のフォントが見つからない環境では、文字化けした画像を保存しないよう失敗させる
+    with pytest.raises(RuntimeError, match="fonts-noto-cjk"):
+        tool.check_japanese_fonts(fonts)
+
+
+def test_browser_env_prefers_japanese_font_on_linux(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(tool.sys, "platform", "linux")
+    monkeypatch.setenv("PATH", "/usr/bin")
+
+    env = tool.browser_env(tmp_path)
+
+    assert env["PATH"] == "/usr/bin"
+    config = Path(env["FONTCONFIG_FILE"])
+    assert config.parent == tmp_path
+    content = config.read_text(encoding="utf-8")
+    # システムの設定を読み込んだうえで、和文は日本語のフォントを優先する
+    assert "/etc/fonts/fonts.conf" in content
+    assert "<family>Noto Sans CJK JP</family>" in content
+
+
+def test_browser_env_keeps_fonts_on_other_platforms(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(tool.sys, "platform", "win32")
+    monkeypatch.delenv("FONTCONFIG_FILE", raising=False)
+
+    env = tool.browser_env(tmp_path)
+
+    assert "FONTCONFIG_FILE" not in env
+    assert list(tmp_path.iterdir()) == []
