@@ -5,18 +5,23 @@ Playwright で各画面を撮影して `docs/images/` に保存する。利用�
 
     uv run playwright install chromium   # 初回のみ
     uv run python tools/capture_screenshots.py
+
+Linux（WSL を含む）では、日本語と中国語の両方のフォントが入っていると、Chromium が漢字・かなの表示に
+中国語のフォント（WenQuanYi Zen Hei など）を選ぶことがある。撮影用のブラウザにだけ fontconfig の設定を渡し、
+和文を Noto Sans CJK JP で描画する。撮影した画面で日本語以外の CJK フォントが使われていれば失敗させる。
 """
 
 import argparse
 import logging
 import os
+import re
 import socket
 import sqlite3
 import subprocess
 import sys
 import tempfile
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -60,6 +65,38 @@ PLAYLIST_SEED = 2024
 PLAYLIST_NAME = "リラックス（サンプル）"
 # 評価対象のうち評価済みにする曲数。未評価の曲も残し、画面の「評価済み n 曲」が分かるようにする
 EVALUATED_COUNT = 24
+# 欧文は Noto Sans のまま、欧文フォントにない文字は日本語のフォントで描画させる。
+# lang を ja にするのは、文字単位のフォールバックでも日本語の字形を持つフォントを選ばせるため。
+FONTCONFIG_TEMPLATE = """<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<fontconfig>
+  <include ignore_missing="yes">/etc/fonts/fonts.conf</include>
+  <match target="pattern">
+    <edit name="lang" mode="assign" binding="strong"><string>ja</string></edit>
+  </match>
+  <alias binding="strong">
+    <family>sans-serif</family>
+    <prefer><family>Noto Sans</family><family>Noto Sans CJK JP</family></prefer>
+  </alias>
+  <alias binding="strong">
+    <family>serif</family>
+    <prefer><family>Noto Serif</family><family>Noto Serif CJK JP</family></prefer>
+  </alias>
+  <alias binding="strong">
+    <family>monospace</family>
+    <prefer><family>Noto Sans Mono</family><family>Noto Sans Mono CJK JP</family></prefer>
+  </alias>
+</fontconfig>
+"""
+# 日本語の字形ではない CJK フォント。簡体字・繁体字・ハングル用のものを検出する
+NON_JAPANESE_CJK_FONT = re.compile(
+    r"CJK (SC|TC|HK|KR)|WenQuanYi|Droid Sans Fallback|AR PL|YaHei|SimSun|SimHei|Malgun|PingFang|Hiragino Sans GB",
+    re.IGNORECASE,
+)
+# 日本語の字形を持つフォント（Linux・Windows・macOS の代表的なもの）
+JAPANESE_FONT = re.compile(
+    r"CJK JP|\bJP\b|IPA|Yu Gothic|Meiryo|MS (UI )?P?Gothic|Hiragino|Takao|VL Gothic", re.IGNORECASE
+)
 
 
 def _free_port() -> int:
@@ -162,6 +199,53 @@ def run_app(data_dir: Path) -> Iterator[str]:
     finally:
         process.terminate()
         process.wait(timeout=15)
+
+
+def browser_env(work_dir: Path) -> dict[str, str | float | bool]:
+    """撮影用のブラウザに渡す環境変数を作る。Linux では和文を日本語のフォントで描画させる設定を加える。"""
+    env: dict[str, str | float | bool] = dict(os.environ)
+    if not sys.platform.startswith("linux"):
+        return env
+
+    config = work_dir / "fonts.conf"
+    config.write_text(FONTCONFIG_TEMPLATE, encoding="utf-8")
+    env["FONTCONFIG_FILE"] = str(config)
+    return env
+
+
+def check_japanese_fonts(fonts: Iterable[str]) -> None:
+    """画面の描画に使われたフォントに、日本語以外の CJK フォントが含まれていないことを確認する。
+
+    Raises:
+        RuntimeError: 日本語以外の CJK フォントが使われた場合、または日本語のフォントが使われていない場合。
+    """
+    used = set(fonts)
+    wrong = sorted(f for f in used if NON_JAPANESE_CJK_FONT.search(f))
+    if wrong:
+        raise RuntimeError(f"non-Japanese CJK font is used: fonts={wrong}")
+
+    if not any(JAPANESE_FONT.search(f) for f in used):
+        raise RuntimeError(f"Japanese font is not used (install fonts-noto-cjk): fonts={sorted(used)}")
+
+
+def rendered_fonts(page: Page) -> set[str]:
+    """ページ名とサイドバーの文字の描画に実際に使われたフォント名を返す。"""
+    cdp = page.context.new_cdp_session(page)
+    try:
+        cdp.send("DOM.enable")
+        cdp.send("CSS.enable")
+        root = cdp.send("DOM.getDocument")["root"]["nodeId"]
+        nodes = cdp.send(
+            "DOM.querySelectorAll", {"nodeId": root, "selector": "h1, h1 *, [data-testid='stSidebarNav'] *"}
+        )["nodeIds"]
+        fonts: set[str] = set()
+        for node in nodes:
+            for font in cdp.send("CSS.getPlatformFontsForNode", {"nodeId": node})["fonts"]:
+                fonts.add(font["familyName"])
+
+        return fonts
+    finally:
+        cdp.detach()
 
 
 def wait_for_app(page: Page) -> None:
@@ -287,6 +371,7 @@ def check_layout(page: Page) -> None:
     if layout["titleHeight"] > layout["titleLineHeight"] * 1.5:
         raise RuntimeError(f"title wraps: {layout}")
 
+    check_japanese_fonts(rendered_fonts(page))
     logger.info("layout checked: width=%d scroll_width=%d", layout["width"], layout["scrollWidth"])
 
 
@@ -456,8 +541,12 @@ def main(argv: list[str] | None = None) -> int:
     with tempfile.TemporaryDirectory(prefix="vps-screenshots-") as tmp:
         data_dir = Path(tmp)
         prepare_database(load_app_config({DATA_DIR_ENV: str(data_dir)}).database_path)
-        with run_app(data_dir) as base_url, sync_playwright() as playwright:
-            browser = playwright.chromium.launch()
+        with (
+            tempfile.TemporaryDirectory(prefix="vps-browser-") as browser_dir,
+            run_app(data_dir) as base_url,
+            sync_playwright() as playwright,
+        ):
+            browser = playwright.chromium.launch(env=browser_env(Path(browser_dir)))
             try:
                 if args.viewport in {"all", "desktop"}:
                     capture_desktop(browser, base_url, output_dir)
