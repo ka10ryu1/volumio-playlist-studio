@@ -123,7 +123,8 @@ def test_refresh_button_shows_latest_data(app_db: sqlite3.Connection) -> None:
 
 
 @pytest.mark.parametrize(
-    "view", ["dashboard", "library", "playlist_page", "manage_page", "evaluation_page", "settings_page"]
+    "view",
+    ["dashboard", "library", "playlist_page", "manage_page", "evaluation_page", "settings_page", "release_notes_page"],
 )
 def test_every_view_has_refresh_button(demo: sqlite3.Connection, view: str) -> None:
     at = run_view(view)
@@ -164,6 +165,14 @@ def test_sidebar_links_to_volumio(demo: sqlite3.Connection, host: str, expected:
         ("問い合わせ（GitHub）", "https://github.com/ka10ryu1/volumio-playlist-studio/issues"),
         *expected,
     ]
+
+
+def test_release_notes_page_is_registered_in_navigation() -> None:
+    at = AppTest.from_file(APP, default_timeout=TIMEOUT).run()
+    navigate(at, "release-notes")
+
+    assert [t.value for t in at.title] == ["リリースノート"]
+    assert any(e.label.endswith("　リリースノート画面を追加") for e in at.expander)
 
 
 def test_dashboard_navigates_to_playlist(demo: sqlite3.Connection) -> None:
