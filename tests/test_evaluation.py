@@ -10,6 +10,7 @@ from volumio_playlist_studio.config import EvaluationDefaults
 from volumio_playlist_studio.evaluation import (
     assign_splits,
     compute_engine_metrics,
+    exclusion_summary,
     export_csv,
     initial_verdict,
     playlist_feedback_metrics,
@@ -18,6 +19,7 @@ from volumio_playlist_studio.evaluation import (
 )
 from volumio_playlist_studio.models import Attribute, Genre, Mood
 from volumio_playlist_studio.storage.evaluations import EvaluationLabel, Split, Verdict
+from volumio_playlist_studio.storage.exclusions import ExclusionReason, TrackExclusion
 from volumio_playlist_studio.storage.playlists import PlaylistEntry, SavedPlaylist
 
 
@@ -112,6 +114,35 @@ def test_engine_metrics_without_data(make_classification: ClassificationFactory)
     assert metrics.evaluated == 0
     assert metrics.genre.accuracy is None
     assert metrics.genre.pending_rate is None
+
+
+def test_exclusion_summary_counts_reasons_per_source_and_genre() -> None:
+    def excluded(source: str, genre: Genre | None, reason: ExclusionReason) -> TrackExclusion:
+        return TrackExclusion(1, reason, genre, source, None, {})
+
+    summary = exclusion_summary(
+        [
+            excluded("rules", Genre.JAZZ, ExclusionReason.PREFERENCE),
+            excluded("jev", Genre.ROCK, ExclusionReason.GENRE_MISMATCH),
+            excluded("rules", Genre.JAZZ, ExclusionReason.GENRE_MISMATCH),
+            excluded("jev", Genre.ROCK, ExclusionReason.GENRE_MISMATCH),
+            excluded("jev", None, ExclusionReason.PREFERENCE),
+            excluded("jev", None, ExclusionReason.PREFERENCE),
+            excluded("rules", None, ExclusionReason.GENRE_MISMATCH),
+        ]
+    )
+
+    # 「ジャンル違い」の多い組を先に、同数なら「好みでない」の多い組を先に並べる
+    assert [(s.source, s.genre, s.genre_mismatch, s.preference) for s in summary] == [
+        ("jev", Genre.ROCK, 2, 0),
+        ("rules", Genre.JAZZ, 1, 1),
+        ("rules", None, 1, 0),
+        ("jev", None, 0, 2),
+    ]
+
+
+def test_exclusion_summary_is_empty_without_exclusions() -> None:
+    assert exclusion_summary([]) == []
 
 
 def test_playlist_feedback_metrics() -> None:

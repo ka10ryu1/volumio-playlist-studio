@@ -17,6 +17,7 @@ from volumio_playlist_studio.config import RATING_MAX, RATING_MIN, EvaluationDef
 from volumio_playlist_studio.models import Attribute, ClassificationResult, Genre, Mood, Track
 from volumio_playlist_studio.playlist import CreationMethod
 from volumio_playlist_studio.storage.evaluations import EvaluationLabel, Split, Verdict
+from volumio_playlist_studio.storage.exclusions import ExclusionReason, TrackExclusion
 from volumio_playlist_studio.storage.playlists import SavedPlaylist
 
 # CSV を表計算ソフトで開いたとき、数式として解釈される先頭文字
@@ -254,6 +255,45 @@ def playlist_feedback_metrics(playlists: list[SavedPlaylist]) -> list[PlaylistFe
         )
 
     return result
+
+
+@dataclass(frozen=True)
+class ExclusionSummary:
+    """プレイリストの作成中に除外した曲の、分類結果の種類とジャンルごとの集計。
+
+    Attributes:
+        source: 選曲に使った分類結果の種類。
+        genre: 除外したときに選曲に使っていたジャンル。不明なら None。
+        genre_mismatch: 「ジャンルとして不適切」として除外した回数。
+        preference: 「好みの問題」として除外した回数。
+    """
+
+    source: str
+    genre: Genre | None
+    genre_mismatch: int
+    preference: int
+
+
+def exclusion_summary(exclusions: list[TrackExclusion]) -> list[ExclusionSummary]:
+    """除外の記録を、分類結果の種類とジャンルの組ごとに数える。
+
+    「ジャンルとして不適切」の多い組（分類の誤りが多いと考えられる組）を先に並べる。
+    """
+    counts: Counter[tuple[str, Genre | None, ExclusionReason]] = Counter(
+        (e.classification_source, e.genre, e.reason) for e in exclusions
+    )
+    # ジャンル不明（None）とジャンルは大小を比べられないため、値の文字列で並べる
+    groups = sorted({(source, genre) for source, genre, _ in counts}, key=lambda g: (g[0], g[1] or ""))
+    summaries = [
+        ExclusionSummary(
+            source=source,
+            genre=genre,
+            genre_mismatch=counts[(source, genre, ExclusionReason.GENRE_MISMATCH)],
+            preference=counts[(source, genre, ExclusionReason.PREFERENCE)],
+        )
+        for source, genre in groups
+    ]
+    return sorted(summaries, key=lambda s: (-s.genre_mismatch, -s.preference))
 
 
 def _csv_safe(value: object) -> str:

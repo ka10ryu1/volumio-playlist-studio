@@ -31,6 +31,12 @@ from volumio_playlist_studio.storage.evaluations import (
     remove_from_evaluation_set,
     save_label,
 )
+from volumio_playlist_studio.storage.exclusions import (
+    ExclusionReason,
+    TrackExclusion,
+    list_exclusions,
+    record_exclusion,
+)
 from volumio_playlist_studio.storage.playlists import (
     PlaylistDraft,
     PlaylistEntry,
@@ -330,6 +336,38 @@ def test_evaluation_keeps_snapshot_of_shown_classification(
     label = load_labels(db)[track_id]
     assert label.classification_snapshot == tag_only
     assert load_classifications(db, "rules")[track_id].result == reanalyzed
+
+
+def test_exclusions_keep_reason_and_snapshot_of_used_classification(
+    db: sqlite3.Connection, make_classification: ClassificationFactory
+) -> None:
+    a, b = _add(db, "a.flac", genre="Jazz"), _add(db, "b.flac")
+    shown = make_classification(genre=Genre.JAZZ, energy=0.2)
+    save_classification(db, a, shown)
+    conditions: dict[str, object] = {"method": "mood", "mood": "relax", "genres": []}
+    record_exclusion(db, TrackExclusion(a, ExclusionReason.GENRE_MISMATCH, Genre.JAZZ, "rules", shown, conditions))
+    # 未分類の曲・ジャンル不明の曲も記録でき、同じ曲を除外し直した記録も別に残す
+    record_exclusion(db, TrackExclusion(b, ExclusionReason.PREFERENCE, None, "jev_then_rules", None, {}))
+    record_exclusion(db, TrackExclusion(a, ExclusionReason.PREFERENCE, Genre.JAZZ, "rules", shown, conditions))
+
+    # 同じエンジン・バージョンで分類し直しても、除外したときの分類結果は写しで追跡できる
+    save_classification(db, a, make_classification(genre=Genre.ROCK, energy=0.9))
+
+    saved = list_exclusions(db)
+    assert [(e.track_id, e.reason, e.genre, e.classification_source) for e in saved] == [
+        (a, ExclusionReason.GENRE_MISMATCH, Genre.JAZZ, "rules"),
+        (b, ExclusionReason.PREFERENCE, None, "jev_then_rules"),
+        (a, ExclusionReason.PREFERENCE, Genre.JAZZ, "rules"),
+    ]
+    assert saved[0].classification == shown
+    assert (saved[0].classification.engine, saved[0].classification.engine_version) == ("rules", "rules-test")
+    assert saved[0].conditions == conditions
+    assert saved[1].classification is None
+    assert all(e.excluded_at for e in saved)
+
+
+def test_exclusions_are_empty_by_default(db: sqlite3.Connection) -> None:
+    assert list_exclusions(db) == []
 
 
 def test_record_error_keeps_only_latest_unresolved_error_per_track_and_stage(db: sqlite3.Connection) -> None:
