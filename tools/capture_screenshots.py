@@ -410,7 +410,10 @@ def create_playlist(page: Page) -> None:
     page.get_by_role("button", name="プレイリストを生成").click()
     wait_for_app(page)
     expect(page.get_by_label("雰囲気", exact=True)).not_to_be_visible()
-    page.get_by_role("tab", name="3. 保存").click()
+    # 曲一覧の下の「保存する」から保存タブへ進めることも確認する
+    page.get_by_role("button", name="保存する").click()
+    wait_for_app(page)
+    expect(page.get_by_role("tab", name="3. 保存")).to_have_attribute("aria-selected", "true")
     page.get_by_label("プレイリスト名", exact=True).fill(PLAYLIST_NAME)
     page.get_by_label("プレイリスト名", exact=True).press("Enter")
     wait_for_app(page)
