@@ -29,6 +29,13 @@
 - `JEV_MOOD_QUESTION_VERSION`: 自由記述の雰囲気（`custom_mood.py`）の質問文を変えたとき。属性の基準（`classify/jev.py` の `ATTRIBUTE_QUESTIONS`）は共有しているため、基準を変えたときは両方を更新する
 - `JEV_ALBUM_QUESTION_VERSION`: 子供向けのアルバムの判定（`classify/children.py`）の質問文・送る項目を変えたとき（更新すると全アルバムが再判定の対象になる）
 
+### リリースノート
+
+- 利用者から見える変更（新機能、画面の変更、利用者に影響する不具合の修正）を含む PR では、[docs/release-notes.md](docs/release-notes.md) の先頭（最初の項目の前）に項目を追加する。アプリの「リリースノート」画面に表示される
+- 項目は `## <マージ日（YYYY-MM-DD）> #<PR 番号> <見出し>` の行で始め、詳しい説明を利用者向けの日本語で書く。PR 番号は PR を作ってから、日付はマージする日に合わせる。曲名・アーティスト名など利用者固有のデータは書かない
+- 開発用のツール・テスト・CI だけの変更では追加しない
+- 書式が崩れると画面にエラーが表示され、`tests/test_release_notes.py` も失敗する
+
 ### 外部サービス
 
 - Volumio 実機とは、読み取りを REST API（`volumio_rest.py`）、プレイリストの作成・曲の追加を WebSocket（Socket.io）API（`volumio_socketio.py`）で行う。Socket.io は socket.io 2.x（Volumio 3）と 3.x 以降の両方に対応させている（[docs/volumio.md](docs/volumio.md)）。Volumio の状態を変更する通信は、ユーザーの承認なしに追加しない

@@ -63,8 +63,11 @@ DATABASE_FILENAME = "studio.sqlite3"
 LOG_DIRNAME = "logs"
 LOG_FILENAME = "app.log"
 
+REPOSITORY_URL = "https://github.com/ka10ryu1/volumio-playlist-studio"
 # 画面の「問い合わせ」から開く、このリポジトリの issue ページ
-ISSUES_URL = "https://github.com/ka10ryu1/volumio-playlist-studio/issues"
+ISSUES_URL = f"{REPOSITORY_URL}/issues"
+# リリースノート画面に表示する内容。PR を作るたびに項目を追加する（書式は release_notes.py を参照）
+RELEASE_NOTES_PATH = PROJECT_ROOT / "docs" / "release-notes.md"
 
 
 @dataclass(frozen=True)

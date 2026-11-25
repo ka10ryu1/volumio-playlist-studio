@@ -14,6 +14,7 @@ from volumio_playlist_studio.gui.views import (
     library,
     manage_page,
     playlist_page,
+    release_notes_page,
     settings_page,
 )
 from volumio_playlist_studio.gui.widgets import volumio_link_button
@@ -71,6 +72,9 @@ def main() -> None:
             st.Page(lambda: manage_page.render(ctx), title="プレイリスト管理", icon="🗂️", url_path="manage"),
             st.Page(lambda: evaluation_page.render(ctx), title="精度評価", icon="✅", url_path="evaluation"),
             st.Page(lambda: settings_page.render(ctx), title="設定", icon="⚙️", url_path="settings"),
+            st.Page(
+                lambda: release_notes_page.render(ctx), title="リリースノート", icon="📰", url_path="release-notes"
+            ),
         ]
         if lan is not None and remote_ip is None:
             port = ctx.config.port

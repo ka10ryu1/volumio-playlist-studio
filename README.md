@@ -118,6 +118,7 @@ sudo mount -t drvfs '\\volumio.local\Internal Storage' /mnt/volumio -o ro
 5. **精度評価**: 30〜50 曲を評価対象に追加し、判定結果の正誤やジャンル・ムードの修正、属性の 5 段階評価を入力します。「集計・CSV」タブでルールベースと Jev の一致率などを比較し、CSV で保存できます。保存したプレイリストの満足度と不適切な曲も記録できます
 6. **設定**: 「一般」で音楽フォルダ・Volumio 接続先・選曲に使う分類結果、「解析・AI」で解析パラメータと Jev の判定基準、「ログ・レポート」でログと確認用レポートを確認します。各設定フォームの「保存」で反映します。Volumio の接続先（例: `volumio.local`）を保存すると「接続テスト」で既存のプレイリスト一覧を確認できます
 7. （任意）**プレイリスト管理 → プレイリストを 1 件選ぶ → Volumio に登録**: 照合先に「Volumio 実機」を選び、「Volumio から曲の一覧を取得」すると、保存したプレイリストの曲が Volumio 上の曲と対応するかを確認できます。プレイリスト名を確認し、確認のチェックを入れて「Volumio に登録」を押すと、Volumio に新しいプレイリストを作成して曲を追加します（同じ名前のプレイリストがある場合は登録しません）。照合先に「モック（模擬）」を選ぶと、Volumio を変更せずに登録の流れを試せます
+8. **リリースノート**: 新機能や画面の変更を新しい順に一覧で表示します。項目を押すと詳しい説明を表示します（内容は [docs/release-notes.md](docs/release-notes.md) と同じです）
 
 実機での確認結果や不具合を GitHub の issue で共有するときは、**設定 → ログ・レポート → レポートを作成** を押し、表示された内容をコピーして issue に貼ってください。スキャン・解析・Volumio との照合・Jev の件数や所要時間、解析エラーの種類、アプリのコミットがまとまります。曲名・アーティスト名・フォルダ名・Volumio の接続先・エラーの本文は含めません。
 
@@ -206,3 +207,4 @@ VPS_TEST_VOLUMIO_HOST=volumio.local uv run pytest -m integration tests/test_volu
 - [docs/jev.md](docs/jev.md): Jev による分類の設計
 - [docs/evaluation.md](docs/evaluation.md): 精度評価の手順と指標
 - [docs/volumio.md](docs/volumio.md): Volumio 連携の調査結果と未確認事項
+- [docs/release-notes.md](docs/release-notes.md): リリースノート（利用者から見える変更の履歴）
