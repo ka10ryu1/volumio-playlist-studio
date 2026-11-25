@@ -16,7 +16,14 @@ from volumio_playlist_studio.config import (
     JevSettings,
 )
 from volumio_playlist_studio.diagnostics import ReportContext, build_report, git_revision
-from volumio_playlist_studio.models import Attribute, ClassificationResult, Genre, TitleSource, TrackMetadata
+from volumio_playlist_studio.models import (
+    Attribute,
+    ClassificationResult,
+    Genre,
+    Mood,
+    TitleSource,
+    TrackMetadata,
+)
 from volumio_playlist_studio.sample_data import DEMO_LIBRARY_ROOT
 from volumio_playlist_studio.storage import settings_store
 from volumio_playlist_studio.storage.album_judgments import AlbumJudgmentRecord, save_album_judgment
@@ -28,6 +35,13 @@ from volumio_playlist_studio.storage.analysis import (
     save_features,
 )
 from volumio_playlist_studio.storage.database import transaction
+from volumio_playlist_studio.storage.evaluations import (
+    EvaluationLabel,
+    Split,
+    Verdict,
+    add_to_evaluation_set,
+    save_label,
+)
 from volumio_playlist_studio.storage.jev_usage import JevUsageKind, JevUsageRecord, list_usage, record_usage
 from volumio_playlist_studio.storage.tracks import ScanSummary, get_track, mark_missing, record_scan, upsert_track
 from volumio_playlist_studio.storage.volumio_library import replace_uris
@@ -324,6 +338,264 @@ def test_unknown_genre_breakdown_for_empty_library(db: sqlite3.Connection) -> No
     assert "ルールベース（判定済み 0 曲のうち不明 0 曲）:" in report
     assert "- ジャンルタグが空: 0 曲" in report
     assert "Jev（判定済み 0 曲のうち不明 0 曲）:\n\n- 不明の曲なし" in report
+
+
+def _with_probabilities(
+    result: ClassificationResult, engine_version: str, probabilities: dict[Attribute, dict[str, float]]
+) -> ClassificationResult:
+    attributes = {
+        a: replace(score, probabilities=probabilities.get(a, score.probabilities))
+        for a, score in result.attributes.items()
+    }
+    return replace(result, engine_version=engine_version, attributes=attributes)
+
+
+def _mood_label(
+    track_id: int, verdict: Verdict | None, mood: Mood | None, split: Split = Split.TUNING
+) -> EvaluationLabel:
+    return EvaluationLabel(track_id, split, mood_verdict=verdict, mood_label=mood, note="秘密のメモ")
+
+
+def _evaluate(conn: sqlite3.Connection, label: EvaluationLabel) -> None:
+    """評価対象に追加し、ムードの評価があれば保存する。"""
+    add_to_evaluation_set(conn, {label.track_id: label.split})
+    if label.is_evaluated:
+        save_label(conn, label)
+
+
+@pytest.fixture
+def evaluated_moods(db: sqlite3.Connection, make_classification: ClassificationFactory) -> sqlite3.Connection:
+    """人手でムードを評価した曲を、正解と判定の組ごとに手で数えられる架空のライブラリ。"""
+    jev_version = JEV_QUESTION_VERSION
+    # (人手の評価, 正解, Jev の結果, ルールベースの結果)。結果の None は未判定
+    rows: list[tuple[Verdict | None, Mood | None, ClassificationResult | None, ClassificationResult | None]] = [
+        # 集中・作業の曲を Jev は元気と判定し、ルールベースは集中・作業と判定した
+        (
+            Verdict.INCORRECT,
+            Mood.FOCUS,
+            _with_probabilities(
+                make_classification(
+                    mood=Mood.ENERGETIC, engine="jev", relaxation=0.2, energy=0.75, work_bgm=0.25, party=0.65
+                ),
+                jev_version,
+                {Attribute.ENERGY: {"0": 0.0, "1": 0.0, "2": 0.2, "3": 0.6, "4": 0.2}},
+            ),
+            make_classification(mood=Mood.FOCUS, energy=0.5, work_bgm=0.75, party=0.3),
+        ),
+        (
+            Verdict.INCORRECT,
+            Mood.FOCUS,
+            # 確率に含まれない段階は 0 として平均する
+            _with_probabilities(
+                make_classification(mood=Mood.ENERGETIC, engine="jev", energy=0.95, work_bgm=0.25, party=0.85),
+                jev_version,
+                {Attribute.ENERGY: {"3": 0.2, "4": 0.8}},
+            ),
+            make_classification(mood=Mood.FOCUS, energy=0.7, work_bgm=0.75, party=0.5),
+        ),
+        # リラックスと穏やかな夜の取り違えは誤りに含めない
+        (
+            Verdict.CORRECT,
+            Mood.RELAX,
+            replace(make_classification(mood=Mood.CALM_NIGHT, engine="jev", energy=0.1), engine_version=jev_version),
+            make_classification(mood=Mood.RELAX),
+        ),
+        (
+            Verdict.CORRECT,
+            Mood.CALM_NIGHT,
+            replace(make_classification(mood=Mood.FOCUS, engine="jev"), engine_version=jev_version),
+            make_classification(mood=None),
+        ),
+        # Jev が判定保留にした曲。保留にした属性の確率も平均に含める
+        (
+            Verdict.INCORRECT,
+            Mood.ENERGETIC,
+            _with_probabilities(
+                make_classification(mood=None, engine="jev", energy=None),
+                jev_version,
+                {Attribute.ENERGY: {"2": 1.0}},
+            ),
+            make_classification(mood=Mood.RELAX),
+        ),
+        # Jev で未判定の曲は、ルールベースの集計にだけ含める
+        (Verdict.CORRECT, Mood.FOCUS, None, make_classification(mood=Mood.FOCUS)),
+        # 人でも判断できないとした曲と、未評価の曲は数えない
+        (
+            Verdict.PENDING,
+            None,
+            replace(make_classification(mood=Mood.ENERGETIC, engine="jev"), engine_version=jev_version),
+            make_classification(mood=Mood.RELAX),
+        ),
+        (
+            None,
+            None,
+            replace(make_classification(mood=Mood.ENERGETIC, engine="jev"), engine_version=jev_version),
+            make_classification(mood=Mood.RELAX),
+        ),
+    ]
+    ratings = {0: {Attribute.ENERGY: 2}}
+    with transaction(db):
+        for i, (verdict, truth, jev_result, rule_result) in enumerate(rows):
+            track_id = upsert_track(db, ROOT, _meta(f"秘密の歌手/{i:02}.flac"), None)
+            _evaluate(db, replace(_mood_label(track_id, verdict, truth), ratings=ratings.get(i, {})))
+            if jev_result is not None:
+                save_classification(db, track_id, jev_result)
+
+            if rule_result is not None:
+                save_classification(db, track_id, replace(rule_result, engine_version=RULE_VERSION))
+
+        # 検証用の曲は、質問や閾値を直した後の確認に残すため数えない
+        holdout = upsert_track(db, ROOT, _meta("秘密の歌手/98.flac"), None)
+        holdout_label = _mood_label(holdout, Verdict.INCORRECT, Mood.FOCUS, Split.HOLDOUT)
+        _evaluate(db, replace(holdout_label, ratings={Attribute.ENERGY: 5}))
+        holdout_jev = _with_probabilities(
+            make_classification(mood=Mood.ENERGETIC, engine="jev", energy=0.0, party=0.0),
+            jev_version,
+            {Attribute.ENERGY: {"0": 1.0}},
+        )
+        save_classification(db, holdout, holdout_jev)
+        holdout_rules = make_classification(mood=Mood.ENERGETIC, energy=0.0)
+        save_classification(db, holdout, replace(holdout_rules, engine_version=RULE_VERSION))
+
+        # 別の音楽フォルダの曲は数えない
+        other = upsert_track(db, "/other", _meta("秘密の歌手/99.flac"), None)
+        _evaluate(db, _mood_label(other, Verdict.INCORRECT, Mood.FOCUS))
+        other_jev = make_classification(mood=Mood.ENERGETIC, engine="jev")
+        save_classification(db, other, replace(other_jev, engine_version=jev_version))
+
+    return db
+
+
+def _between(text: str, start: str, end: str) -> str:
+    begin = text.index(start)
+    return text[begin : text.index(end, begin)]
+
+
+def test_report_compares_jev_moods_with_human_labels(evaluated_moods: sqlite3.Connection) -> None:
+    report = _report(evaluated_moods, host=None)
+    section = _between(report, "### Jev のムードの偏り", "### ジャンルが不明の内訳")
+
+    assert (
+        "- ムードの正解がある調整用の曲: 6 曲（人でも判断できないとした曲を除く）。"
+        "検証用の 1 曲は、質問や閾値を直した後の確認に残すため含めない"
+    ) in section
+    assert (
+        "- Jev: 判定済み 5 曲のうち判定保留 1 曲、正解 1 曲（うちリラックスと穏やかな夜の取り違え 1 曲）、"
+        "誤り 3 曲（判定の内訳: 集中・作業 1、元気 2）"
+    ) in section
+    assert (
+        "- ルールベース: 判定済み 6 曲のうち判定保留 1 曲、正解 4 曲（うちリラックスと穏やかな夜の取り違え 0 曲）、"
+        "誤り 1 曲（判定の内訳: リラックス 1）"
+    ) in section
+
+    header = "| 正解 | リラックス | 集中・作業 | 元気 | 穏やかな夜 | 判定保留 |"
+    jev_table = _between(section, "正解（行）と Jev の判定（列）", "正解（行）とルールベース")
+    assert (
+        f"{header}\n|---|---:|---:|---:|---:|---:|\n"
+        "| リラックス | 0 | 0 | 0 | 1 | 0 |\n"
+        "| 集中・作業 | 0 | 0 | 2 | 0 | 0 |\n"
+        "| 元気 | 0 | 0 | 0 | 0 | 1 |\n"
+        "| 穏やかな夜 | 0 | 1 | 0 | 0 | 0 |\n"
+    ) in jev_table
+    rule_table = _between(section, "正解（行）とルールベース", "ムードの適合度")
+    assert (
+        f"{header}\n|---|---:|---:|---:|---:|---:|\n"
+        "| リラックス | 1 | 0 | 0 | 0 | 0 |\n"
+        "| 集中・作業 | 0 | 3 | 0 | 0 | 0 |\n"
+        "| 元気 | 1 | 0 | 0 | 0 | 0 |\n"
+        "| 穏やかな夜 | 0 | 0 | 0 | 0 | 1 |\n"
+    ) in rule_table
+
+    # 元気は energy と party の平均（Jev: 0.70 と 0.90、ルールベース: 0.40 と 0.60）
+    score_table = _between(section, "ムードの適合度", "属性の値")
+    assert "| 集中・作業 → 元気 | 2 | 0.20 / - | 0.25 / 0.75 | 0.80 / 0.50 | - / - |" in score_table
+    # 人手の 5 段階評価の 2 は 0.25。評価を入力していない曲は平均に含めない
+    value_table = _between(section, "属性の値", "Jev のリラックス度")
+    assert (
+        "| 集中・作業 → 元気 | 2 | 0.20 / - / - | 0.85 / 0.60 / 0.25 | - / - / - | - / - / - | 0.25 / 0.75 / - "
+        "| 0.75 / 0.40 / - | - / - / - |"
+    ) in value_table
+
+    energy_table = _between(
+        section, "Jev のエネルギー感（energy）の段階ごとの確率の平均（段階 0 が最も低く 4", "Jev の明るさ"
+    )
+    assert "| 正解 → Jev の判定 | 曲数 | 0 | 1 | 2 | 3 | 4 | 判定保留 |" in energy_table
+    # 行の順は正解、判定の順で Mood の定義順
+    assert (
+        "| リラックス → 穏やかな夜 | 1 | - | - | - | - | - | 0 |\n"
+        "| 集中・作業 → 元気 | 2 | 0.00 | 0.00 | 0.10 | 0.40 | 0.50 | 0 |\n"
+        "| 元気 → 判定保留 | 1 | 0.00 | 0.00 | 1.00 | 0.00 | 0.00 | 1 |\n"
+        "| 穏やかな夜 → 集中・作業 | 1 | - | - | - | - | - | 0 |\n"
+    ) in energy_table
+    for attribute in Attribute:
+        assert f"（{attribute.value}）の段階ごとの確率の平均" in section
+
+    for secret in [*SECRETS, "/other"]:
+        assert secret not in report
+
+
+def test_mood_bias_without_mood_labels(library: sqlite3.Connection) -> None:
+    report = _report(library)
+
+    assert (
+        "### Jev のムードの偏り（人手の評価との比較）\n\n"
+        "- ムードの正解がある調整用の曲: 0 曲（人でも判断できないとした曲を除く）。"
+        "検証用の 0 曲は、質問や閾値を直した後の確認に残すため含めない\n\n###"
+    ) in report
+
+
+def test_mood_bias_excludes_holdout_tracks(db: sqlite3.Connection, make_classification: ClassificationFactory) -> None:
+    with transaction(db):
+        track_id = upsert_track(db, ROOT, _meta("秘密の歌手/01.flac"), None)
+        _evaluate(db, _mood_label(track_id, Verdict.INCORRECT, Mood.FOCUS, Split.HOLDOUT))
+        jev_result = make_classification(mood=Mood.ENERGETIC, engine="jev", energy=0.75)
+        save_classification(db, track_id, replace(jev_result, engine_version=JEV_QUESTION_VERSION))
+
+    report = _report(db, host=None)
+    section = _between(report, "### Jev のムードの偏り", "### ジャンルが不明の内訳")
+
+    assert "- ムードの正解がある調整用の曲: 0 曲" in section
+    assert "検証用の 1 曲は、質問や閾値を直した後の確認に残すため含めない" in section
+    assert "- Jev:" not in section
+    assert "正解（行）と Jev の判定" not in section
+
+
+def test_mood_bias_without_jev_results(db: sqlite3.Connection, make_classification: ClassificationFactory) -> None:
+    with transaction(db):
+        track_id = upsert_track(db, ROOT, _meta("秘密の歌手/01.flac"), None)
+        _evaluate(db, _mood_label(track_id, Verdict.CORRECT, Mood.RELAX))
+        rule_result = make_classification(mood=Mood.CALM_NIGHT)
+        save_classification(db, track_id, replace(rule_result, engine_version=RULE_VERSION))
+        # 古い質問のバージョンの Jev の結果は比べない
+        save_classification(db, track_id, make_classification(mood=Mood.ENERGETIC, engine="jev"))
+
+    report = _report(db, host=None)
+
+    assert (
+        "- Jev: 判定済み 0 曲のうち判定保留 0 曲、正解 0 曲（うちリラックスと穏やかな夜の取り違え 0 曲）、誤り 0 曲\n"
+    ) in report
+    assert (
+        "- ルールベース: 判定済み 1 曲のうち判定保留 0 曲、正解 1 曲（うちリラックスと穏やかな夜の取り違え 1 曲）、"
+        "誤り 0 曲\n"
+    ) in report
+    assert "正解（行）と Jev の判定" not in report
+
+
+def test_mood_bias_without_rule_results(db: sqlite3.Connection, make_classification: ClassificationFactory) -> None:
+    with transaction(db):
+        track_id = upsert_track(db, ROOT, _meta("秘密の歌手/01.flac"), None)
+        _evaluate(db, _mood_label(track_id, Verdict.INCORRECT, Mood.FOCUS))
+        jev_result = make_classification(mood=Mood.ENERGETIC, engine="jev", energy=0.75, party=0.25)
+        save_classification(db, track_id, replace(jev_result, engine_version=JEV_QUESTION_VERSION))
+
+    report = _report(db, host=None)
+
+    assert (
+        "正解（行）とルールベースの判定（列）の曲数（Jev で判定済みの曲に限らない）:\n\n- 判定済みの曲なし\n" in report
+    )
+    # ルールベースの値がない曲は「-」
+    assert "| 集中・作業 → 元気 | 1 | - / - | - / - | 0.50 / - | - / - |" in report
+    assert "| 集中・作業 → 元気 | 1 | - / - / - | 0.75 / - / - |" in report
 
 
 def test_report_does_not_contain_names_paths_host_or_error_messages(library: sqlite3.Connection) -> None:
