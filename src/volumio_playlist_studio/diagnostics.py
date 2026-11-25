@@ -16,9 +16,10 @@ from pathlib import Path, PurePosixPath
 from volumio_playlist_studio.albums import album_key
 from volumio_playlist_studio.analyzer import is_analyzable
 from volumio_playlist_studio.catalog import UNKNOWN_GENRE_LABEL, dashboard_stats
+from volumio_playlist_studio.classify.base import MOOD_COMPONENTS, mood_scores
 from volumio_playlist_studio.classify.genre_tags import genre_from_tag
+from volumio_playlist_studio.classify.jev import ATTRIBUTE_QUESTIONS, recorded_genre_determinable
 from volumio_playlist_studio.classify.jev import ENGINE_NAME as JEV_ENGINE
-from volumio_playlist_studio.classify.jev import recorded_genre_determinable
 from volumio_playlist_studio.classify.rules import ENGINE_NAME as RULES_ENGINE
 from volumio_playlist_studio.config import (
     ANALYSIS_VERSION,
@@ -28,12 +29,16 @@ from volumio_playlist_studio.config import (
     RULE_VERSION,
     JevSettings,
 )
+from volumio_playlist_studio.evaluation import rating_to_unit
 from volumio_playlist_studio.models import (
     ATTRIBUTE_LABELS,
     GENRE_LABELS,
+    MOOD_LABELS,
+    Attribute,
     ClassificationResult,
     ClassificationSource,
     Genre,
+    Mood,
     TitleSource,
     Track,
 )
@@ -41,6 +46,7 @@ from volumio_playlist_studio.sample_data import DEMO_LIBRARY_ROOT
 from volumio_playlist_studio.storage import analysis as analysis_store
 from volumio_playlist_studio.storage import settings_store
 from volumio_playlist_studio.storage.database import current_version, utc_now
+from volumio_playlist_studio.storage.evaluations import EvaluationLabel, Split, Verdict, load_labels
 from volumio_playlist_studio.storage.jev_usage import JevUsageKind, list_usage
 from volumio_playlist_studio.storage.tracks import list_tracks
 from volumio_playlist_studio.storage.volumio_library import last_collected_at, load_uris
@@ -65,6 +71,9 @@ _MATCH_LABELS = {
     MatchStatus.UNMATCHED: "対応なし",
     MatchStatus.AMBIGUOUS: "候補が複数",
 }
+# 人でも区別に迷うため、取り違えても誤りとして数えないムードの組（#36 の評価での判断）
+_INTERCHANGEABLE_MOODS = frozenset({Mood.RELAX, Mood.CALM_NIGHT})
+_HELD_MOOD_LABEL = "判定保留"
 
 
 @dataclass(frozen=True)
@@ -103,12 +112,14 @@ def build_report(conn: sqlite3.Connection, context: ReportContext) -> str:
     track_ids = {t.id for t in tracks}
     rules = _results(analysis_store.load_classifications(conn, RULES_ENGINE, RULE_VERSION), track_ids)
     jev = _results(analysis_store.load_classifications(conn, JEV_ENGINE, JEV_QUESTION_VERSION), track_ids)
+    labels = {track_id: label for track_id, label in load_labels(conn).items() if track_id in track_ids}
     for section in (
         _scan_section(conn, root, tracks),
         _analysis_section(conn, root, tracks),
         _tag_section(tracks),
         _volumio_section(conn, context.volumio_host, tracks),
         _jev_section(conn, root, rules, jev),
+        _mood_bias_section(labels, rules, jev),
         _unknown_genre_section(tracks, rules, jev, settings_store.get_jev_settings(conn)),
     ):
         lines += ["", *section]
@@ -332,6 +343,223 @@ def _genre_comparison(rules: dict[int, ClassificationResult], jev: dict[int, Cla
         if rule_counts[g] or jev_counts[g]
     ]
     return lines
+
+
+def _mood_bias_section(
+    labels: dict[int, EvaluationLabel],
+    rules: dict[int, ClassificationResult],
+    jev: dict[int, ClassificationResult],
+) -> list[str]:
+    """人手でムードの正解を入力した曲について、Jev とルールベースのムード・属性を比べる（#49）。
+
+    Jev のムードの誤りが、どの属性のどの段階に偏っているかを確かめるための集計。保存済みの結果だけを使い、
+    Jev には問い合わせない。曲を特定できないよう、正解と判定の組ごとの件数と平均だけを出す。
+
+    質問や閾値を直す材料にするため、調整用の曲だけを対象にする。検証用の曲は、直した後の独立した確認に残す
+    （docs/evaluation.md の「過学習を防ぐ」）。
+    """
+    labeled = [label for label in labels.values() if _mood_truth(label) is not None]
+    truths = {
+        label.track_id: truth
+        for label in labeled
+        if label.split == Split.TUNING and (truth := _mood_truth(label)) is not None
+    }
+    lines = [
+        "### Jev のムードの偏り（人手の評価との比較）",
+        "",
+        f"- ムードの正解がある調整用の曲: {len(truths)} 曲（人でも判断できないとした曲を除く）。"
+        f"検証用の {len(labeled) - len(truths)} 曲は、質問や閾値を直した後の確認に残すため含めない",
+    ]
+    if not truths:
+        return lines
+
+    lines += [
+        "- 現在のバージョンの判定結果と比べる（評価したときに表示していた判定とは異なる場合がある）。"
+        "リラックスと穏やかな夜の取り違えは、人でも区別に迷うため誤りに含めない",
+        _mood_accuracy_line("Jev", truths, jev),
+        _mood_accuracy_line("ルールベース", truths, rules),
+    ]
+    groups = _mood_groups(truths, jev)
+    if not groups:
+        return lines
+
+    lines += [
+        "",
+        "正解（行）と Jev の判定（列）の曲数:",
+        "",
+        *_mood_confusion_table(truths, jev),
+        "",
+        "正解（行）とルールベースの判定（列）の曲数（Jev で判定済みの曲に限らない）:",
+        "",
+        *_mood_confusion_table(truths, rules),
+        "",
+        "以下は Jev で判定済みの曲を、正解と Jev の判定の組ごとに分けた平均。ルールベースと人手は同じ曲の値で、"
+        "判定保留・未判定・未入力の値は平均に含めない（値がなければ「-」）。",
+        "",
+        "ムードの適合度（ムードを決める属性の平均。Jev / ルールベース）:",
+        "",
+        *_mood_score_table(groups, rules, jev),
+        "",
+        "属性の値（0〜1。Jev / ルールベース / 人手の 5 段階評価を 0〜1 に換算した値）:",
+        "",
+        *_attribute_value_table(groups, labels, rules, jev),
+    ]
+    for attribute, (_, criteria) in ATTRIBUTE_QUESTIONS.items():
+        lines += [
+            "",
+            f"Jev の{ATTRIBUTE_LABELS[attribute]}（{attribute.value}）の段階ごとの確率の平均"
+            f"（段階 0 が最も低く {len(criteria) - 1} が最も高い）:",
+            "",
+            *_probability_table(groups, jev, attribute, len(criteria)),
+        ]
+
+    return lines
+
+
+def _mood_truth(label: EvaluationLabel) -> Mood | None:
+    """人手が正しいとしたムード。判定の正誤を「判断できない」とした曲や未評価の曲は None。"""
+    if label.mood_verdict in {Verdict.CORRECT, Verdict.INCORRECT}:
+        return label.mood_label
+
+    return None
+
+
+def _mood_matches(truth: Mood, predicted: Mood) -> bool:
+    return truth == predicted or {truth, predicted} <= _INTERCHANGEABLE_MOODS
+
+
+def _mood_accuracy_line(engine_label: str, truths: dict[int, Mood], results: dict[int, ClassificationResult]) -> str:
+    pairs = [(truths[i], results[i].mood) for i in truths if i in results]
+    decided = [(t, p) for t, p in pairs if p is not None]
+    correct = sum(1 for t, p in decided if _mood_matches(t, p))
+    swapped = sum(1 for t, p in decided if t != p and _mood_matches(t, p))
+    errors = Counter(p for t, p in decided if not _mood_matches(t, p))
+    breakdown = f"（判定の内訳: {_counts((MOOD_LABELS[m], n) for m, n in _by_mood_order(errors))}）" if errors else ""
+    return (
+        f"- {engine_label}: 判定済み {len(pairs)} 曲のうち判定保留 {len(pairs) - len(decided)} 曲、"
+        f"正解 {correct} 曲（うちリラックスと穏やかな夜の取り違え {swapped} 曲）、誤り {sum(errors.values())} 曲"
+        + breakdown
+    )
+
+
+def _mood_order(mood: Mood | None) -> int:
+    """表の並び順。Mood の定義順で、判定保留（None）は最後。"""
+    moods = list(Mood)
+    return len(moods) if mood is None else moods.index(mood)
+
+
+def _by_mood_order(counts: Counter[Mood]) -> list[tuple[Mood, int]]:
+    return sorted(counts.items(), key=lambda item: _mood_order(item[0]))
+
+
+def _mood_name(mood: Mood | None) -> str:
+    return _HELD_MOOD_LABEL if mood is None else MOOD_LABELS[mood]
+
+
+def _mood_groups(
+    truths: dict[int, Mood], jev: dict[int, ClassificationResult]
+) -> dict[tuple[Mood, Mood | None], list[int]]:
+    """Jev で判定済みの曲を、（正解, Jev の判定）の組ごとに分ける。正解、判定の順に Mood の定義順で並べる。"""
+    groups: dict[tuple[Mood, Mood | None], list[int]] = {}
+    for track_id in sorted(truths.keys() & jev.keys()):
+        groups.setdefault((truths[track_id], jev[track_id].mood), []).append(track_id)
+
+    return dict(sorted(groups.items(), key=lambda item: (_mood_order(item[0][0]), _mood_order(item[0][1]))))
+
+
+def _mood_confusion_table(truths: dict[int, Mood], results: dict[int, ClassificationResult]) -> list[str]:
+    pairs = Counter((truths[i], results[i].mood) for i in truths if i in results)
+    if not pairs:
+        return ["- 判定済みの曲なし"]
+
+    rows = sorted({t for t, _ in pairs}, key=_mood_order)
+    # 判定に使うムードの候補は、該当する曲がなくても列に出す（偏りがないことも分かるように）
+    columns = sorted({*MOOD_COMPONENTS, *(p for _, p in pairs)}, key=_mood_order)
+    lines = [
+        "| 正解 | " + " | ".join(_mood_name(c) for c in columns) + " |",
+        "|---|" + "---:|" * len(columns),
+    ]
+    lines += [f"| {MOOD_LABELS[t]} | " + " | ".join(str(pairs[(t, c)]) for c in columns) + " |" for t in rows]
+    return lines
+
+
+def _group_label(truth: Mood, predicted: Mood | None) -> str:
+    return f"{MOOD_LABELS[truth]} → {_mood_name(predicted)}"
+
+
+def _mood_score_table(
+    groups: dict[tuple[Mood, Mood | None], list[int]],
+    rules: dict[int, ClassificationResult],
+    jev: dict[int, ClassificationResult],
+) -> list[str]:
+    moods = list(MOOD_COMPONENTS)
+    lines = [
+        "| 正解 → Jev の判定 | 曲数 | " + " | ".join(MOOD_LABELS[m] for m in moods) + " |",
+        "|---|---:|" + "---:|" * len(moods),
+    ]
+    for (truth, predicted), ids in groups.items():
+        jev_scores = [mood_scores(jev[i].attributes) for i in ids]
+        rule_scores = [mood_scores(rules[i].attributes) for i in ids if i in rules]
+        cells = [
+            f"{_mean([s[m] for s in jev_scores if m in s])} / {_mean([s[m] for s in rule_scores if m in s])}"
+            for m in moods
+        ]
+        lines.append(f"| {_group_label(truth, predicted)} | {len(ids)} | " + " | ".join(cells) + " |")
+
+    return lines
+
+
+def _attribute_value_table(
+    groups: dict[tuple[Mood, Mood | None], list[int]],
+    labels: dict[int, EvaluationLabel],
+    rules: dict[int, ClassificationResult],
+    jev: dict[int, ClassificationResult],
+) -> list[str]:
+    attributes = list(Attribute)
+    lines = [
+        "| 正解 → Jev の判定 | 曲数 | " + " | ".join(ATTRIBUTE_LABELS[a] for a in attributes) + " |",
+        "|---|---:|" + "---:|" * len(attributes),
+    ]
+    for (truth, predicted), ids in groups.items():
+        cells = []
+        for attribute in attributes:
+            jev_values = [jev[i].attribute_value(attribute) for i in ids]
+            rule_values = [rules[i].attribute_value(attribute) for i in ids if i in rules]
+            ratings = [labels[i].ratings.get(attribute) for i in ids]
+            human = [None if r is None else rating_to_unit(r) for r in ratings]
+            cells.append(f"{_mean(jev_values)} / {_mean(rule_values)} / {_mean(human)}")
+
+        lines.append(f"| {_group_label(truth, predicted)} | {len(ids)} | " + " | ".join(cells) + " |")
+
+    return lines
+
+
+def _probability_table(
+    groups: dict[tuple[Mood, Mood | None], list[int]],
+    jev: dict[int, ClassificationResult],
+    attribute: Attribute,
+    level_count: int,
+) -> list[str]:
+    """属性の段階ごとの確率の平均。判定保留の曲も確率は保存しているため平均に含め、件数を別の列に出す。"""
+    levels = [str(level) for level in range(level_count)]
+    lines = [
+        "| 正解 → Jev の判定 | 曲数 | " + " | ".join(levels) + " | 判定保留 |",
+        "|---|---:|" + "---:|" * (len(levels) + 1),
+    ]
+    for (truth, predicted), ids in groups.items():
+        scores = [jev[i].attributes.get(attribute) for i in ids]
+        probabilities = [s.probabilities for s in scores if s is not None and s.probabilities is not None]
+        held = sum(1 for s in scores if s is not None and s.is_held)
+        cells = [_mean([p.get(level, 0.0) for p in probabilities]) for level in levels]
+        lines.append(f"| {_group_label(truth, predicted)} | {len(ids)} | " + " | ".join(cells) + f" | {held} |")
+
+    return lines
+
+
+def _mean(values: Iterable[float | None]) -> str:
+    """値の平均を小数 2 桁で返す。None は除き、値がなければ「-」。"""
+    known = [v for v in values if v is not None]
+    return f"{sum(known) / len(known):.2f}" if known else "-"
 
 
 def _unknown_genre_section(
