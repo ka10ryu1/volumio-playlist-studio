@@ -248,6 +248,23 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (
         WHERE key = 'jev_settings' AND json_extract(value_json, '$.children_threshold') = 0.5
         """,
     ),
+    (
+        # プレイリストの作成中に曲を除外した記録と理由。「ジャンルとして不適切」は分類の誤りの評価に使うため、
+        # 選曲に使っていたジャンルと分類結果の写し（分類結果の行は再分類で上書きされるため）を残す。
+        # プレイリストを保存する前に記録するため、playlists とは結び付けない
+        """
+        CREATE TABLE track_exclusions (
+            id INTEGER PRIMARY KEY,
+            track_id INTEGER NOT NULL REFERENCES tracks (id) ON DELETE CASCADE,
+            reason TEXT NOT NULL CHECK (reason IN ('genre_mismatch', 'preference')),
+            genre TEXT,
+            classification_source TEXT NOT NULL,
+            classification_snapshot_json TEXT,
+            conditions_json TEXT NOT NULL,
+            excluded_at TEXT NOT NULL
+        )
+        """,
+    ),
 )
 
 SCHEMA_VERSION = len(MIGRATIONS)

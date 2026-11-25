@@ -2,14 +2,13 @@
 
 import sqlite3
 import threading
-import time
 from pathlib import Path
 
 import pytest
 import soundfile as sf
 from conftest import SAMPLE_RATE, sine
 from streamlit.testing.v1 import AppTest
-from test_gui import click, run_view
+from test_gui import click, click_row, draft_rows, is_loading_track, run_view, wait_track_loaded
 
 from volumio_playlist_studio.models import (
     Attribute,
@@ -126,6 +125,22 @@ def test_playlist_feedback(demo: sqlite3.Connection) -> None:
     assert saved.entries[0].unsuitable
 
 
+def test_exclusions_while_creating_playlist_are_summarized(demo: sqlite3.Connection) -> None:
+    at = run_view("evaluation_page")
+    assert any("「ジャンル違い」「好みでない」を押して除外すると" in c.value for c in at.caption)
+
+    at = run_view("playlist_page")
+    click(at, "プレイリストを生成")
+    genre = draft_rows(at)[0]["genre"]
+    click_row(at, "ジャンル違い", 0)
+    at = run_view("evaluation_page")
+
+    table = next(d.value for d in at.dataframe if "ジャンル違い" in d.value.columns)
+    assert table.to_dict("records") == [
+        {"分類結果": "jev_then_rules", "選曲に使ったジャンル": genre, "ジャンル違い": 1, "好みでない": 0}
+    ]
+
+
 def _meta(rel_path: str, title: str) -> TrackMetadata:
     return TrackMetadata(
         rel_path=rel_path, title=title, artist="歌手", album=None, genre=None, year=None, track_number=None,
@@ -151,12 +166,6 @@ def playable(app_db: sqlite3.Connection, tmp_path: Path) -> dict[str, int]:
     return ids
 
 
-_LOADING = "曲を読み込んでいます"
-# 曲の読み込みが終わるのを待つ上限（回数 × 間隔）
-_WAIT_TRIES = 200
-_WAIT_INTERVAL_SEC = 0.05
-
-
 def _open_track(track_id: int) -> AppTest:
     at = run_view("evaluation_page")
     next(s for s in at.selectbox if s.label == "曲").set_value(track_id).run()
@@ -164,31 +173,14 @@ def _open_track(track_id: int) -> AppTest:
     return at
 
 
-def _is_loading(at: AppTest) -> bool:
-    return any(_LOADING in c.value for c in at.caption)
-
-
-def _wait_loaded(at: AppTest) -> AppTest:
-    """バックグラウンドでの曲の読み込みが終わるまで、画面を再実行する。"""
-    for _ in range(_WAIT_TRIES):
-        if not _is_loading(at):
-            return at
-
-        time.sleep(_WAIT_INTERVAL_SEC)
-        at.run()
-        assert not at.exception
-
-    raise AssertionError("track did not finish loading")
-
-
 def test_evaluation_plays_selected_track(playable: dict[str, int]) -> None:
-    at = _wait_loaded(_open_track(playable["再生できる曲"]))
+    at = wait_track_loaded(_open_track(playable["再生できる曲"]))
 
     [player] = at.get("audio")
     assert player.proto.url
 
     # 曲を変えると、その曲が再生できない理由を表示する
-    at = _wait_loaded(_open_track(playable["消えた曲"]))
+    at = wait_track_loaded(_open_track(playable["消えた曲"]))
     assert not at.get("audio")
     assert any("ファイルが見つからない" in w.value for w in at.warning)
     at = _open_track(playable["未対応"])
@@ -211,7 +203,7 @@ def test_slow_track_loading_does_not_block_evaluation(
     track_id = playable["再生できる曲"]
     at = _open_track(track_id)
 
-    assert _is_loading(at)
+    assert is_loading_track(at)
     assert not at.get("audio")
     next(r for r in at.radio if r.label == "ジャンルの判定は").set_value(Verdict.PENDING)
     next(r for r in at.radio if r.label == "ムードの判定は").set_value(Verdict.PENDING)
@@ -222,7 +214,7 @@ def test_slow_track_loading_does_not_block_evaluation(
     release.set()
     next(c for c in at.checkbox if c.label == "未評価の曲だけ表示").uncheck().run()
     next(s for s in at.selectbox if s.label == "曲").set_value(track_id).run()
-    at = _wait_loaded(at)
+    at = wait_track_loaded(at)
     assert len(at.get("audio")) == 1
 
 
@@ -231,7 +223,7 @@ def test_unreadable_track_shows_reason(playable: dict[str, int], monkeypatch: py
         raise PermissionError(13, "Permission denied", str(path))
 
     monkeypatch.setattr(Path, "read_bytes", denied)
-    at = _wait_loaded(_open_track(playable["再生できる曲"]))
+    at = wait_track_loaded(_open_track(playable["再生できる曲"]))
 
     assert not at.get("audio")
     assert any("曲のファイルを読めない" in w.value for w in at.warning)

@@ -574,9 +574,9 @@ def check_settings_keyboard(page: Page) -> None:
 
 def check_navigation_state(page: Page) -> None:
     """同一セッションのページ移動で、保存名・条件・編集結果が維持されることを実ブラウザでも確認する。"""
-    page.get_by_role("button", name="除外", exact=True).click()
+    page.get_by_role("button", name="好みでない", exact=True).first.click()
     wait_for_app(page)
-    selection = page.get_by_test_id("stSelectbox").filter(has=page.get_by_text("編集する曲", exact=True))
+    selection = page.get_by_test_id("stSelectbox").filter(has=page.get_by_text("並べ替える曲", exact=True))
     before = selection.inner_text()
     page.get_by_role("tab", name="3. 保存").click()
     page.get_by_label("プレイリスト名", exact=True).fill("移動後も保持する名前")

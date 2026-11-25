@@ -8,7 +8,7 @@ import sqlite3
 import pytest
 from streamlit.dataframe_util import convert_arrow_bytes_to_pandas_df
 from streamlit.testing.v1 import AppTest
-from test_gui import click, run_view
+from test_gui import click, draft_rows, run_view
 
 from volumio_playlist_studio.models import (
     Attribute,
@@ -195,8 +195,8 @@ def test_playlist_by_circle_previews_and_saves_conditions(demo: sqlite3.Connecti
 
     click(at, "プレイリストを生成")
     assert any(h.value == "リラックス周辺のプレイリスト" for h in at.subheader)
-    assert len(at.dataframe[0].value) == 1
-    assert "中心への近さ" in at.dataframe[1].value.columns
+    assert len(draft_rows(at)) == 1
+    assert "中心への近さ" in at.dataframe[0].value.columns
 
     click(at, "プレイリストを保存")
     [saved] = list_playlists(demo)
