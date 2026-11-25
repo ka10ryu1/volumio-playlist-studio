@@ -9,6 +9,7 @@ from volumio_playlist_studio.config import RATING_MAX, RATING_MIN, EvaluationDef
 from volumio_playlist_studio.evaluation import (
     EngineMetrics,
     compute_engine_metrics,
+    exclusion_summary,
     export_csv,
     initial_verdict,
     playlist_feedback_metrics,
@@ -36,6 +37,7 @@ from volumio_playlist_studio.storage.evaluations import (
     load_labels,
     save_label,
 )
+from volumio_playlist_studio.storage.exclusions import list_exclusions
 from volumio_playlist_studio.storage.playlists import SavedPlaylist, list_playlists, set_feedback
 from volumio_playlist_studio.storage.tracks import get_track, list_tracks
 
@@ -346,6 +348,35 @@ def _playlist_feedback_section(ctx: PageContext) -> None:
             width="stretch",
         )
         st.caption("削除したプレイリストの評価も集計に含めています。")
+
+    _exclusion_section(ctx)
+
+
+def _exclusion_section(ctx: PageContext) -> None:
+    """プレイリストの作成中に理由を選んで除外した曲の集計を表示する。"""
+    st.subheader("作成中に除外した曲")
+    summaries = exclusion_summary(list_exclusions(ctx.conn))
+    if not summaries:
+        st.caption("プレイリスト作成画面の曲一覧で「ジャンル違い」「好みでない」を押して除外すると、ここに集計します。")
+        return
+
+    st.dataframe(
+        [
+            {
+                "分類結果": s.source,
+                "選曲に使ったジャンル": genre_label(s.genre),
+                "ジャンル違い": s.genre_mismatch,
+                "好みでない": s.preference,
+            }
+            for s in summaries
+        ],
+        hide_index=True,
+        width="stretch",
+    )
+    st.caption(
+        "「ジャンル違い」は分類の誤りとして、除外したときの分類結果（エンジン・バージョン）と一緒に記録しています。"
+        "「好みでない」は記録するだけで、次回以降の選曲には影響しません。"
+    )
 
 
 def _playlist_feedback_form(ctx: PageContext, playlists: list[SavedPlaylist]) -> None:

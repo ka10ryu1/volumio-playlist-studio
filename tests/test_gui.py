@@ -4,7 +4,9 @@
 このファイルから import する。実際の外部 API・Volumio とは通信しない。
 """
 
+import re
 import sqlite3
+import time
 from pathlib import Path
 
 import pytest
@@ -19,6 +21,14 @@ from volumio_playlist_studio.storage.database import transaction
 
 APP = str(Path(__file__).parents[1] / "src" / "volumio_playlist_studio" / "gui" / "app.py")
 TIMEOUT = 60
+# プレイリスト作成画面の曲一覧の 1 行（「1. 曲名 — アーティスト（3:20・ジャンル）」）
+_DRAFT_ROW = re.compile(
+    r"(?P<number>\d+)\. (?P<title>.+) — (?P<artist>.+)（(?P<duration>[^（）・]+)・(?P<genre>[^（）]+)）"
+)
+_LOADING = "曲を読み込んでいます"
+# 曲の読み込みが終わるのを待つ上限（回数 × 間隔）
+_WAIT_TRIES = 200
+_WAIT_INTERVAL_SEC = 0.05
 
 
 def view_script(view: str) -> None:
@@ -67,6 +77,47 @@ def select_rows(at: AppTest, key: str, rows: list[int]) -> AppTest:
     at.run()
     assert not at.exception, [e.value for e in at.exception]
     return at
+
+
+def draft_rows(at: AppTest) -> list[dict[str, str]]:
+    """プレイリスト作成画面の曲一覧の各行を、表示順に返す。
+
+    Returns:
+        行ごとの曲名（title）・アーティスト（artist）・時間（duration）・ジャンル（genre）。
+    """
+    rows = [m for t in at.text if (m := _DRAFT_ROW.fullmatch(t.value))]
+    assert [int(m["number"]) for m in rows] == list(range(1, len(rows) + 1))
+    return [{k: v for k, v in m.groupdict().items() if k != "number"} for m in rows]
+
+
+def draft_titles(at: AppTest) -> list[str]:
+    """プレイリスト作成画面の曲一覧の曲名を、表示順に返す。"""
+    return [row["title"] for row in draft_rows(at)]
+
+
+def click_row(at: AppTest, label: str, index: int) -> AppTest:
+    """プレイリスト作成画面の曲一覧で、index 番目（0 始まり）の行のボタンを押す。"""
+    [b for b in at.button if b.label == label][index].click().run()
+    assert not at.exception, [e.value for e in at.exception]
+    return at
+
+
+def is_loading_track(at: AppTest) -> bool:
+    """曲を再生するプレーヤーが、曲のファイルを読み込み中かどうか。"""
+    return any(_LOADING in c.value for c in at.caption)
+
+
+def wait_track_loaded(at: AppTest) -> AppTest:
+    """バックグラウンドでの曲の読み込みが終わるまで、画面を再実行する。"""
+    for _ in range(_WAIT_TRIES):
+        if not is_loading_track(at):
+            return at
+
+        time.sleep(_WAIT_INTERVAL_SEC)
+        at.run()
+        assert not at.exception
+
+    raise AssertionError("track did not finish loading")
 
 
 def submit(at: AppTest, form_id: str) -> None:
@@ -182,7 +233,7 @@ def test_dashboard_navigates_to_playlist(demo: sqlite3.Connection) -> None:
     click(at, "プレイリストを生成")
     assert not next(e for e in at.expander if e.label == "1. 選曲の条件").proto.expanded
     assert [t.label for t in at.tabs] == ["2. 曲を編集", "3. 保存"]
-    assert len(at.dataframe[0].value) > 0
+    assert draft_rows(at)
 
 
 def test_dashboard_navigates_to_library(demo: sqlite3.Connection) -> None:
@@ -211,7 +262,7 @@ def test_select_widgets_do_not_accept_typing_except_track_search(demo: sqlite3.C
     assert [w.label for w in widgets].count("プレイリスト") == 1
     assert {w.label for w in widgets} >= {
         "ジャンルを選ぶ（全ジャンル以外の場合）",
-        "編集する曲",
+        "並べ替える曲",
         "プレイリスト",
         "解析状況",
         "判定ジャンルで絞り込み",
@@ -228,22 +279,22 @@ def test_playlist_round_trip_keeps_unsaved_inputs_and_draft(demo: sqlite3.Connec
     at = AppTest.from_file(APP, default_timeout=TIMEOUT).run()
     click(at, "プレイリストを作成")
     click(at, "プレイリストを生成")
-    click(at, "除外")
-    before = at.dataframe[0].value["曲名"].tolist()
+    click(at, "好みでない")
+    before = draft_titles(at)
     at.text_input(key="pl_name").input("戻って編集する名前").run()
     at.selectbox(key="pl_mood").set_value(Mood.FOCUS).run()
     at.number_input(key="pl_count").set_value(7).run()
     at.number_input(key="pl_seed").set_value(2024).run()
     navigate(at, "settings")
     assert [t.value for t in at.title] == ["設定"]
-    assert not at.dataframe
+    assert not draft_rows(at)
     navigate(at, "playlist")
     assert [t.value for t in at.title] == ["プレイリスト作成"]
     assert at.text_input(key="pl_name").value == "戻って編集する名前"
     assert at.selectbox(key="pl_mood").value == Mood.FOCUS
     assert at.number_input(key="pl_count").value == 7
     assert at.number_input(key="pl_seed").value == 2024
-    assert at.dataframe[0].value["曲名"].tolist() == before
+    assert draft_titles(at) == before
 
 
 def test_playlist_page_opens_manage_page_after_saving(demo: sqlite3.Connection) -> None:

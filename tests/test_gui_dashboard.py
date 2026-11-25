@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 from streamlit.testing.v1 import AppTest
-from test_gui import APP, TIMEOUT, click, navigate, run_view
+from test_gui import APP, TIMEOUT, click, draft_rows, draft_titles, navigate, run_view
 from test_gui_manage import save_demo_playlist
 
 from volumio_playlist_studio.config import ANALYSIS_VERSION
@@ -134,8 +134,8 @@ def test_genre_shortcut_preserves_draft_and_other_conditions(demo: sqlite3.Conne
     at = AppTest.from_file(APP, default_timeout=TIMEOUT).run()
     click(at, "プレイリストを作成")
     click(at, "プレイリストを生成")
-    click(at, "除外")
-    before = at.dataframe[0].value["曲名"].tolist()
+    click(at, "好みでない")
+    before = draft_titles(at)
     at.text_input(key="pl_name").input("編集中のリスト").run()
     at.selectbox(key="pl_mood").set_value(Mood.FOCUS).run()
     at.number_input(key="pl_count").set_value(7).run()
@@ -149,7 +149,7 @@ def test_genre_shortcut_preserves_draft_and_other_conditions(demo: sqlite3.Conne
     assert at.title[0].value == "プレイリスト作成"
     assert at.radio(key="pl_genre_mode").value == GenreMode.MIX
     assert at.multiselect(key="pl_genres").value == [Genre.POP]
-    assert at.dataframe[0].value["曲名"].tolist() == before
+    assert draft_titles(at) == before
     click(at, "ジャンル条件に反映" if apply else "見送る")
     navigate(at, "")
     click(at, "プレイリストを作成")
@@ -160,7 +160,7 @@ def test_genre_shortcut_preserves_draft_and_other_conditions(demo: sqlite3.Conne
     assert at.selectbox(key="pl_mood").value == Mood.FOCUS
     assert at.number_input(key="pl_count").value == 7
     assert at.number_input(key="pl_seed").value == 2024
-    assert at.dataframe[0].value["曲名"].tolist() == before
+    assert draft_titles(at) == before
     assert not any(button.label == "ジャンル条件に反映" for button in at.button)
 
 
@@ -168,10 +168,11 @@ def test_genre_shortcut_applies_before_first_generation(demo: sqlite3.Connection
     at = AppTest.from_file(APP, default_timeout=TIMEOUT).run()
     at.selectbox(key="dashboard-genre").set_value(Genre.ROCK).run()
     click(at, "このジャンルで選曲へ")
-    assert not at.dataframe
+    assert not draft_rows(at)
     click(at, "ジャンル条件に反映")
-    assert not at.dataframe
+    assert not draft_rows(at)
     at.selectbox(key="pl_mood").set_value(Mood.OMAKASE).run()
     click(at, "プレイリストを生成")
-    assert len(at.dataframe[0].value) > 0
-    assert set(at.dataframe[0].value["ジャンル"]) == {"ロック"}
+    rows = draft_rows(at)
+    assert rows
+    assert {row["genre"] for row in rows} == {"ロック"}

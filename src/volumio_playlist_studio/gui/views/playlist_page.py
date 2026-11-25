@@ -15,8 +15,16 @@ from volumio_playlist_studio.catalog import load_candidates
 from volumio_playlist_studio.config import PlaylistDefaults
 from volumio_playlist_studio.gui.context import PageContext
 from volumio_playlist_studio.gui.views import mood_map_panel
+from volumio_playlist_studio.gui.views.playlist_tracks import close_player, track_list
 from volumio_playlist_studio.gui.widgets import format_duration, genre_label, page_title, track_label
-from volumio_playlist_studio.models import CLASSIFICATION_SOURCE_LABELS, MOOD_LABELS, CustomMood, Genre, Mood
+from volumio_playlist_studio.models import (
+    CLASSIFICATION_SOURCE_LABELS,
+    MOOD_LABELS,
+    ClassificationSource,
+    CustomMood,
+    Genre,
+    Mood,
+)
 from volumio_playlist_studio.mood_map import (
     DISPLAY_SCALE,
     MOOD_POSITIONS,
@@ -39,7 +47,6 @@ from volumio_playlist_studio.playlist import (
     add_item,
     generate_playlist,
     move_item,
-    remove_item,
     total_duration,
 )
 from volumio_playlist_studio.storage.custom_moods import list_custom_moods
@@ -56,6 +63,8 @@ _DRAFT_KEY = "pl_draft"
 _SAVED_KEY = "pl_saved_id"
 _SAVED_NAME_KEY = "pl_saved_name"
 _SEED_KEY = "pl_seed"
+# 編集中の曲を選んだときの分類結果の種類。生成後に設定を変えても、保存・除外の記録には生成時の種類を残す
+_SOURCE_KEY = "pl_source"
 _TABS_KEY = "playlist-tabs"
 _EDIT_TAB = "2. 曲を編集"
 _SAVE_TAB = "3. 保存"
@@ -192,7 +201,7 @@ def render(ctx: PageContext, *, on_manage: Callable[[], None] | None = None) -> 
             mood_map_panel.render(candidates, custom_moods, selected=st.session_state.get(_MOOD_KEY))
 
     if request is not None:
-        _generate(candidates, request, defaults)
+        _generate(candidates, request, defaults, ctx.classification_source)
         st.rerun()
 
     result: Result | None = st.session_state.get(_RESULT_KEY)
@@ -200,8 +209,8 @@ def render(ctx: PageContext, *, on_manage: Callable[[], None] | None = None) -> 
         # 曲一覧の下の「保存する」から保存タブへ切り替えられるよう、選択中のタブを状態として持つ
         edit_tab, save_tab = st.tabs([_EDIT_TAB, _SAVE_TAB], key=_TABS_KEY, on_change="rerun")
         with edit_tab:
-            _shortfall_notice(candidates, result, defaults)
-            _draft_editor(candidates, result)
+            _shortfall_notice(candidates, result, defaults, ctx.classification_source)
+            _draft_editor(ctx, candidates, result)
 
         with save_tab:
             _save_section(ctx, result, on_manage)
@@ -576,7 +585,17 @@ def _genres_are_valid(options: _Options) -> bool:
     return True
 
 
-def _generate(candidates: list[Candidate], request: Request, defaults: PlaylistDefaults) -> None:
+def _generate(
+    candidates: list[Candidate], request: Request, defaults: PlaylistDefaults, source: ClassificationSource
+) -> None:
+    """プレイリストを生成し、編集中の曲を置き換える。
+
+    Args:
+        candidates: 選曲の候補。
+        request: 生成条件。
+        defaults: 生成の既定値と制約。
+        source: 候補の読み込みに使った分類結果の種類。
+    """
     result: Result
     if isinstance(request, CircleRequest):
         result = generate_circle_playlist(candidates, request, defaults)
@@ -588,6 +607,8 @@ def _generate(candidates: list[Candidate], request: Request, defaults: PlaylistD
     st.session_state[_RESULT_KEY] = result
     st.session_state[_DRAFT_KEY] = list(result.tracks)
     st.session_state.pop(_SAVED_KEY, None)
+    st.session_state[_SOURCE_KEY] = source
+    close_player()
     st.session_state["pl_name"] = f"{_playlist_title(request)} {datetime.now():%Y-%m-%d %H:%M}"
 
 
@@ -616,7 +637,9 @@ def _artist_title(request: ArtistRequest) -> str:
     return title
 
 
-def _shortfall_notice(candidates: list[Candidate], result: Result, defaults: PlaylistDefaults) -> None:
+def _shortfall_notice(
+    candidates: list[Candidate], result: Result, defaults: PlaylistDefaults, source: ClassificationSource
+) -> None:
     for warning in result.warnings:
         st.warning(warning)
 
@@ -639,11 +662,11 @@ def _shortfall_notice(candidates: list[Candidate], result: Result, defaults: Pla
     )
     request = result.request
     if isinstance(request, PlaylistRequest) and not request.relaxed and st.button("条件を緩和して再生成"):
-        _generate(candidates, replace(request, relaxed=True), defaults)
+        _generate(candidates, replace(request, relaxed=True), defaults, source)
         st.rerun()
 
 
-def _draft_editor(candidates: list[Candidate], result: Result) -> None:
+def _draft_editor(ctx: PageContext, candidates: list[Candidate], result: Result) -> None:
     draft: list[SelectedTrack] = st.session_state.get(_DRAFT_KEY, [])
     request = result.request
     if isinstance(request, CircleRequest):
@@ -656,25 +679,10 @@ def _draft_editor(candidates: list[Candidate], result: Result) -> None:
     st.subheader(f"{_playlist_title(request)}のプレイリスト")
     st.write(f"{len(draft)} 曲・合計 {format_duration(total_duration(draft))}{note}")
     if draft:
-        st.dataframe(
-            [
-                {
-                    "順番": i + 1,
-                    "曲名": item.track.display_title,
-                    "アーティスト": item.track.display_artist,
-                    "時間": format_duration(item.track.duration_sec),
-                    "ジャンル": genre_label(item.candidate.genre),
-                }
-                for i, item in enumerate(draft)
-            ],
-            hide_index=True,
-            width="stretch",
-            height=280,
-            column_config={
-                "順番": st.column_config.NumberColumn(width="small"),
-                "曲名": st.column_config.TextColumn(width="medium"),
-            },
-        )
+        remaining = track_list(ctx, draft, request.to_dict(), _generation_source(ctx))
+        if remaining is not None:
+            _update_draft(remaining)
+
         _edit_track(draft)
     else:
         st.info("曲がありません。「曲を追加する」か、条件を変えて生成してください。")
@@ -723,7 +731,7 @@ def _open_save_tab() -> None:
 def _edit_track(draft: list[SelectedTrack]) -> None:
     ids = [item.track.id for item in draft]
     selected_id = st.selectbox(
-        "編集する曲",
+        "並べ替える曲",
         ids,
         format_func=lambda track_id: f"{ids.index(track_id) + 1}. {track_label(draft[ids.index(track_id)].track)}",
         key="pl_edit_track",
@@ -741,9 +749,6 @@ def _edit_track(draft: list[SelectedTrack]) -> None:
 
         if st.button("下へ", disabled=selected == len(draft) - 1, icon=":material/arrow_downward:"):
             _update_draft(move_item(draft, selected, 1))
-
-        if st.button("除外", help="このプレイリストから外します。音楽ファイルは変更しません。"):
-            _update_draft(remove_item(draft, selected))
 
 
 def _save_section(ctx: PageContext, result: Result, on_manage: Callable[[], None] | None) -> None:
@@ -800,8 +805,14 @@ def _save(ctx: PageContext, name: str, request: Request, draft: list[SelectedTra
                 name=name,
                 conditions=request.to_dict(),
                 seed=request.seed,
-                classification_source=ctx.classification_source.value,
+                classification_source=_generation_source(ctx).value,
                 total_duration_sec=total_duration(draft),
                 entries=[PlaylistEntry(t.track.id, t.score, t.added_manually) for t in draft],
             ),
         )
+
+
+def _generation_source(ctx: PageContext) -> ClassificationSource:
+    """編集中の曲を選んだときの分類結果の種類。記録がなければ現在の設定を使う。"""
+    source = st.session_state.get(_SOURCE_KEY)
+    return source if isinstance(source, ClassificationSource) else ctx.classification_source
