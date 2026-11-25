@@ -4,7 +4,7 @@ import pytest
 from hypothesis import given
 from hypothesis import strategies as st
 
-from volumio_playlist_studio.library_paths import to_library_relative_path
+from volumio_playlist_studio.library_paths import library_file_path, to_library_relative_path
 
 LIBRARY_ROOT = Path("/home/user/Music")
 
@@ -107,3 +107,42 @@ def test_dot_segments_are_resolved_or_rejected(segments: list[str]) -> None:
             to_library_relative_path(path, LIBRARY_ROOT)
     else:
         assert to_library_relative_path(path, LIBRARY_ROOT) == ("/".join(expected) or ".")
+
+
+@pytest.mark.parametrize(
+    ("rel_path", "expected"),
+    [
+        ("artist/album/01.flac", Path("/home/user/Music/artist/album/01.flac")),
+        ("01.flac", Path("/home/user/Music/01.flac")),
+        # 名前に「..」を含むだけのファイルは、ルートの外を指さない
+        ("artist/..hidden..flac", Path("/home/user/Music/artist/..hidden..flac")),
+    ],
+)
+def test_library_file_path_joins_relative_path(rel_path: str, expected: Path) -> None:
+    assert library_file_path("/home/user/Music", rel_path) == expected
+
+
+@pytest.mark.parametrize(
+    "rel_path",
+    [
+        "",
+        ".",
+        "/etc/passwd",
+        "../Documents/memo.txt",
+        "artist/../../Documents/memo.txt",
+        "artist/..",
+    ],
+)
+def test_library_file_path_rejects_paths_outside_library(rel_path: str) -> None:
+    with pytest.raises(ValueError, match="inside library_root") as exc_info:
+        library_file_path("/home/user/Music", rel_path)
+
+    # 例外のメッセージには、ログに残してはいけないパスを含めない
+    assert "Documents" not in str(exc_info.value)
+
+
+@given(segments=st.lists(path_segments, min_size=1, max_size=5))
+def test_library_file_path_stays_inside_library_root(segments: list[str]) -> None:
+    path = library_file_path(str(LIBRARY_ROOT), "/".join(segments))
+
+    assert to_library_relative_path(path, LIBRARY_ROOT) == "/".join(segments)

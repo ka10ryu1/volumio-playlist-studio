@@ -13,6 +13,7 @@ from pathlib import Path, PurePosixPath
 import streamlit as st
 
 from volumio_playlist_studio.config import AUDIO_MIME_TYPES
+from volumio_playlist_studio.library_paths import library_file_path
 from volumio_playlist_studio.models import Track
 
 logger = logging.getLogger(__name__)
@@ -44,10 +45,19 @@ def track_player(library_root: str, track: Track) -> None:
     """曲をブラウザで再生するプレーヤーを表示する。
 
     同じ曲を表示している間は読み込んだデータを使い回し、画面を再実行するたびに読み直さない。
+    読み込んだデータはセッションごとに 1 曲分だけ持ち、別の曲を表示すると入れ替える。
     """
     mimetype = AUDIO_MIME_TYPES.get(PurePosixPath(track.rel_path).suffix.lower())
     if mimetype is None:
         st.caption("この形式の曲は再生できません。")
+        return
+
+    try:
+        path = library_file_path(library_root, track.rel_path)
+    except ValueError:
+        # DB の値が壊れていても、音楽フォルダの外のファイルはブラウザに送らない
+        logger.warning("audio playback rejected: track_id=%d reason=outside_library", track.id)
+        st.warning("曲のファイルの場所が音楽フォルダの外を指しているため再生できません。")
         return
 
     # DB に記録した値だけで決め、画面のスレッドではファイルにアクセスしない
@@ -56,7 +66,6 @@ def track_player(library_root: str, track: Track) -> None:
     if not isinstance(load, _AudioLoad) or load.key != key:
         load = _AudioLoad(key)
         st.session_state[_STATE_KEY] = load
-        path = Path(library_root) / track.rel_path
         thread = threading.Thread(target=_read, args=(load, path, track.rel_path), name="track-player", daemon=True)
         thread.start()
 

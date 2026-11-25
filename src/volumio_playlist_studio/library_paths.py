@@ -36,6 +36,23 @@ def to_library_relative_path(path: Path, library_root: Path) -> str:
     return normalized_path.relative_to(normalized_root).as_posix()
 
 
+def library_file_path(library_root: str, rel_path: str) -> Path:
+    """DB に記録した音楽ライブラリのルートからの相対パスを、ファイルのパスにする。
+
+    DB の値が壊れていても音楽ライブラリの外のファイルを読まないよう、絶対パスやドライブ名、`..` を含む
+    相対パスは受け付けない。ファイルシステムには触れず、パスの文字列だけで判定する。
+
+    Raises:
+        ValueError: 相対パスが空、または音楽ライブラリの外を指しうる場合。
+    """
+    relative = Path(rel_path)
+    if not relative.parts or relative.anchor or ".." in relative.parts:
+        # 例外メッセージはログに残りうるため、パス自体は含めない
+        raise ValueError("rel_path must point to a file inside library_root")
+
+    return Path(library_root) / relative
+
+
 class LibraryPathError(ValueError):
     """音楽フォルダとして指定されたパスが使えない場合の例外。
 
