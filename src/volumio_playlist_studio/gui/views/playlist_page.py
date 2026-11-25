@@ -676,16 +676,22 @@ def _draft_editor(ctx: PageContext, candidates: list[Candidate], result: Result)
         note = "（条件を緩和）" if request.relaxed else ""
         score_label = "適合度"
 
+    source = _generation_source(ctx)
     st.subheader(f"{_playlist_title(request)}のプレイリスト")
     st.write(f"{len(draft)} 曲・合計 {format_duration(total_duration(draft))}{note}")
     if draft:
-        remaining = track_list(ctx, draft, request.to_dict(), _generation_source(ctx))
+        remaining = track_list(ctx, draft, request.to_dict(), source)
         if remaining is not None:
             _update_draft(remaining)
 
         _edit_track(draft)
     else:
         st.info("曲がありません。「曲を追加する」か、条件を変えて生成してください。")
+
+    # 生成後に設定で分類結果の種類を変えても、追加する曲は生成時の種類で選ぶ。
+    # 除外や保存で記録する種類と、曲ごとの分類結果の写しを食い違わせないため
+    if source != ctx.classification_source and ctx.library_root is not None:
+        candidates = load_candidates(ctx.conn, ctx.library_root, source)
 
     in_draft = {t.track.id for t in draft}
     addable = [c for c in candidates if c.track.id not in in_draft]

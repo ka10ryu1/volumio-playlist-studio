@@ -12,6 +12,7 @@ from test_gui import click, click_row, draft_rows, draft_titles, run_view, wait_
 from volumio_playlist_studio.config import PlaylistDefaults
 from volumio_playlist_studio.models import (
     GENRE_LABELS,
+    ClassificationResult,
     ClassificationSource,
     Genre,
     Mood,
@@ -21,6 +22,7 @@ from volumio_playlist_studio.models import (
 from volumio_playlist_studio.playlist import ChildrenMode, CreationMethod, GenreMode
 from volumio_playlist_studio.sample_data import DEMO_LIBRARY_ROOT
 from volumio_playlist_studio.storage import settings_store
+from volumio_playlist_studio.storage.analysis import save_classification
 from volumio_playlist_studio.storage.database import transaction
 from volumio_playlist_studio.storage.exclusions import ExclusionReason, list_exclusions
 from volumio_playlist_studio.storage.playlists import list_playlists
@@ -333,6 +335,36 @@ def test_exclusion_and_save_keep_source_used_for_generation(demo: sqlite3.Connec
     click(at, "プレイリストを生成")
     click_row(at, "ジャンル違い", 0)
     assert list_exclusions(demo)[-1].classification_source == ClassificationSource.RULES.value
+
+
+def test_added_track_uses_classification_source_of_generation(demo: sqlite3.Connection) -> None:
+    with transaction(demo):
+        settings_store.set_value(demo, settings_store.CLASSIFICATION_SOURCE_KEY, ClassificationSource.RULES.value)
+
+    at = run_view("playlist_page")
+    click(at, "プレイリストを生成")
+
+    # 生成した後に設定を Jev 優先に変え、すべての曲に Jev の判定がある状態で曲を追加する
+    with transaction(demo):
+        settings_store.set_value(
+            demo, settings_store.CLASSIFICATION_SOURCE_KEY, ClassificationSource.JEV_THEN_RULES.value
+        )
+        for track in list_tracks(demo, DEMO_LIBRARY_ROOT):
+            jev = ClassificationResult(
+                engine="jev", engine_version="jev-test", model=None, genre=Genre.ROCK, genre_confidence=None,
+                genre_probabilities=None, mood=None, attributes={},
+            )  # fmt: skip
+            save_classification(demo, track.id, jev)
+
+    next(s for s in at.selectbox if s.label == "追加する曲").select_index(0).run()
+    click(at, "追加")
+    click_row(at, "ジャンル違い", -1)
+
+    # 追加した曲も生成時と同じ分類結果（ルールベース）で選ばれ、その種類と写しが一致して記録される
+    [exclusion] = list_exclusions(demo)
+    assert exclusion.classification_source == ClassificationSource.RULES.value
+    assert exclusion.classification is not None
+    assert exclusion.classification.engine == "rules"
 
 
 def _meta(rel_path: str, title: str) -> TrackMetadata:
