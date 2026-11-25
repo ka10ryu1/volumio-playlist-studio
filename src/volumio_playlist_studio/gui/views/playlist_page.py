@@ -56,6 +56,9 @@ _DRAFT_KEY = "pl_draft"
 _SAVED_KEY = "pl_saved_id"
 _SAVED_NAME_KEY = "pl_saved_name"
 _SEED_KEY = "pl_seed"
+_TABS_KEY = "playlist-tabs"
+_EDIT_TAB = "2. 曲を編集"
+_SAVE_TAB = "3. 保存"
 # 円の中心の選択肢のうち、自由記述の雰囲気を表す値の接頭辞（既存の雰囲気は Mood の値そのもの）
 _CUSTOM_CENTER_PREFIX = "custom:"
 _MAX_SEED = 1_000_000
@@ -194,7 +197,8 @@ def render(ctx: PageContext, *, on_manage: Callable[[], None] | None = None) -> 
 
     result: Result | None = st.session_state.get(_RESULT_KEY)
     if result is not None:
-        edit_tab, save_tab = st.tabs(["2. 曲を編集", "3. 保存"], key="playlist-tabs")
+        # 曲一覧の下の「保存する」から保存タブへ切り替えられるよう、選択中のタブを状態として持つ
+        edit_tab, save_tab = st.tabs([_EDIT_TAB, _SAVE_TAB], key=_TABS_KEY, on_change="rerun")
         with edit_tab:
             _shortfall_notice(candidates, result, defaults)
             _draft_editor(candidates, result)
@@ -699,7 +703,21 @@ def _draft_editor(candidates: list[Candidate], result: Result) -> None:
             width="stretch",
         )
 
-    st.caption("編集が終わったら「3. 保存・連携」タブで名前を付けて保存します。")
+    # 曲一覧を下までスクロールした位置から、上のタブに戻らずに保存へ進めるようにする
+    st.caption(f"編集が終わったら「{_SAVE_TAB}」タブで名前を付けて保存します。")
+    st.button(
+        "保存する",
+        type="primary",
+        icon=":material/save:",
+        disabled=not draft,
+        width="stretch",
+        on_click=_open_save_tab,
+        key="pl-open-save-tab",
+    )
+
+
+def _open_save_tab() -> None:
+    st.session_state[_TABS_KEY] = _SAVE_TAB
 
 
 def _edit_track(draft: list[SelectedTrack]) -> None:

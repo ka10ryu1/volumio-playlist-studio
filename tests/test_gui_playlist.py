@@ -66,6 +66,22 @@ def test_playlist_generation_edit_and_save(demo: sqlite3.Connection) -> None:
     assert not any(b.label in ("Volumio に登録", "選んだプレイリストを削除") for b in at.button)
 
 
+def test_save_button_below_track_list_opens_save_tab(demo: sqlite3.Connection) -> None:
+    at = run_view("playlist_page")
+    click(at, "プレイリストを生成")
+    assert at.session_state["playlist-tabs"] == "2. 曲を編集"
+
+    # 曲一覧の下から保存タブへ進み、そのまま名前を付けて保存できる
+    click(at, "保存する")
+    assert at.session_state["playlist-tabs"] == "3. 保存"
+    at.text_input(key="pl_name").input("下のボタンから保存").run()
+    click(at, "プレイリストを保存")
+    assert [playlist.name for playlist in list_playlists(demo)] == ["下のボタンから保存"]
+    # 保存後も保存タブのまま、結果のメッセージを表示する
+    assert at.session_state["playlist-tabs"] == "3. 保存"
+    assert any("を保存しました" in s.value for s in at.success)
+
+
 def test_playlist_shortfall_offers_relaxation(demo: sqlite3.Connection) -> None:
     at = run_view("playlist_page")
     next(r for r in at.radio if r.label == "ジャンル").set_value(GenreMode.ONLY)
@@ -147,10 +163,12 @@ def test_playlist_empty_draft_can_be_restored(demo: sqlite3.Connection) -> None:
     click(at, "除外")
     assert any("曲がありません" in i.value for i in at.info)
     assert next(b for b in at.button if b.label == "プレイリストを保存").disabled
+    assert next(b for b in at.button if b.label == "保存する").disabled
     next(s for s in at.selectbox if s.label == "追加する曲").select_index(0).run()
     click(at, "追加")
     assert len(at.dataframe[0].value) == 1
     assert not next(b for b in at.button if b.label == "プレイリストを保存").disabled
+    assert not next(b for b in at.button if b.label == "保存する").disabled
 
 
 def test_playlist_empty_name_is_rejected_without_losing_draft(demo: sqlite3.Connection) -> None:
